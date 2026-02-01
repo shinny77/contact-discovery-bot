@@ -1,29 +1,21 @@
 {
-  "name": "contact-discovery-bot-v2",
-  "version": "2.0.0",
-  "description": "Enhanced Slack bot for contact discovery with web search, LinkedIn discovery, validation, caching, and batch processing",
-  "main": "index.js",
+  "name": "contact-discovery-bot",
+  "version": "3.0.0",
+  "description": "Contact discovery tool with Slack integration for AU/NZ business contacts",
+  "main": "webapp.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "node test.js",
-    "test:live": "node test.js --live"
+    "start": "node webapp.js",
+    "slack": "node slack-bot.js",
+    "test": "node test.js"
   },
   "dependencies": {
-    "@slack/events-api": "^3.0.1",
-    "@slack/web-api": "^6.9.0",
     "axios": "^1.6.0",
     "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "fuse.js": "^7.0.0",
-    "ioredis": "^5.3.2"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "express": "^4.18.2"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "author": "Attalis Capital",
-  "license": "PRIVATE"
+  "license": "MIT"
 }
