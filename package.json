@@ -1,10 +1,11 @@
 {
   "name": "contact-discovery-bot",
-  "version": "3.0.0",
-  "description": "Contact discovery tool with Slack integration for AU/NZ business contacts",
-  "main": "webapp.js",
+  "version": "4.0.0",
+  "description": "Multi-source contact discovery with Slack integration for AU/NZ business contacts",
+  "main": "webapp-v2.js",
   "scripts": {
-    "start": "node webapp.js",
+    "start": "node webapp-v2.js",
+    "web": "node webapp.js",
     "slack": "node slack-bot.js",
     "test": "node test.js"
   },
