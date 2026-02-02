@@ -1010,6 +1010,171 @@ function generateCSV(enrichedContacts) {
 }
 
 // ============================================================================
+// CRM EXPORT - HubSpot and Salesforce formats
+// ============================================================================
+
+function generateHubSpotCSV(contacts) {
+  const esc = v => { if (!v) return ''; const s = String(v); return s.includes(',') || s.includes('"') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  
+  // HubSpot contact import columns
+  const headers = [
+    'First Name', 'Last Name', 'Email', 'Phone Number', 'Job Title',
+    'Company Name', 'Company Domain', 'LinkedIn URL', 'Lead Status',
+    'Contact Owner', 'Lifecycle Stage', 'Notes'
+  ];
+  
+  const rows = [headers.join(',')];
+  
+  contacts.forEach(c => {
+    const email = c.emails?.[0]?.email || c.email || '';
+    const phone = c.phones?.[0]?.number || c.phone || '';
+    const notes = [
+      c.sources?.length ? 'Sources: ' + c.sources.join(', ') : '',
+      c.companyInfo?.abn ? 'ABN: ' + c.companyInfo.abn : '',
+      c._timestamp ? 'Enriched: ' + c._timestamp : '',
+    ].filter(Boolean).join(' | ');
+    
+    rows.push([
+      esc(c.firstName),
+      esc(c.lastName),
+      esc(email),
+      esc(phone),
+      esc(c.title || c.lastTitle),
+      esc(c.company || c.lastCompany || c.companyInfo?.name),
+      esc(c.domain || c.companyInfo?.domain),
+      esc(c.linkedin),
+      'New',  // Lead Status
+      '',     // Contact Owner (leave blank)
+      'lead', // Lifecycle Stage
+      esc(notes),
+    ].join(','));
+  });
+  
+  return rows.join('\n');
+}
+
+function generateSalesforceCSV(contacts) {
+  const esc = v => { if (!v) return ''; const s = String(v); return s.includes(',') || s.includes('"') ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  
+  // Salesforce Lead import columns
+  const headers = [
+    'FirstName', 'LastName', 'Email', 'Phone', 'MobilePhone', 'Title',
+    'Company', 'Website', 'LinkedIn__c', 'LeadSource', 'Status',
+    'Industry', 'NumberOfEmployees', 'Description'
+  ];
+  
+  const rows = [headers.join(',')];
+  
+  contacts.forEach(c => {
+    const workEmail = c.emails?.find(e => e.type !== 'personal')?.email || c.emails?.[0]?.email || c.email || '';
+    const workPhone = c.phones?.find(p => p.type === 'work' || p.type === 'company')?.number || '';
+    const mobile = c.phones?.find(p => p.type === 'mobile')?.number || c.phones?.[0]?.number || c.phone || '';
+    
+    const description = [
+      c.sources?.length ? 'Data sources: ' + c.sources.join(', ') : '',
+      c.companyInfo?.abn ? 'ABN: ' + c.companyInfo.abn : '',
+      c.emails?.length > 1 ? 'Alt emails: ' + c.emails.slice(1).map(e => e.email).join(', ') : '',
+    ].filter(Boolean).join('\n');
+    
+    rows.push([
+      esc(c.firstName),
+      esc(c.lastName),
+      esc(workEmail),
+      esc(workPhone),
+      esc(mobile),
+      esc(c.title || c.lastTitle),
+      esc(c.company || c.lastCompany || c.companyInfo?.name),
+      esc(c.domain || c.companyInfo?.domain),
+      esc(c.linkedin),
+      'Contact Discovery Bot',  // LeadSource
+      'Open - Not Contacted',   // Status
+      esc(c.companyInfo?.industry || ''),
+      c.companyInfo?.auEmployees || c.companyInfo?.employees || '',
+      esc(description),
+    ].join(','));
+  });
+  
+  return rows.join('\n');
+}
+
+// Convert various result formats to contact array for export
+function normalizeForExport(data, type) {
+  const contacts = [];
+  
+  if (type === 'colleagues' && data.colleagues) {
+    data.colleagues.forEach(c => {
+      contacts.push({
+        firstName: c.firstName,
+        lastName: c.lastName,
+        title: c.title,
+        company: data.company?.name,
+        domain: data.company?.domain,
+        linkedin: c.linkedin,
+        emails: c.emails || [],
+        phones: c.phones || [],
+        sources: ['Apollo'],
+      });
+    });
+  } else if (type === 'prospects' && data.prospects) {
+    data.prospects.forEach(p => {
+      contacts.push({
+        firstName: p.firstName,
+        lastName: p.lastName,
+        title: p.title,
+        company: p.company,
+        domain: p.companyDomain,
+        linkedin: p.linkedin,
+        sources: ['Apollo'],
+      });
+    });
+  } else if (type === 'lookalikes' && data.lookalikes) {
+    // For lookalikes, we export company data (no individual contacts)
+    data.lookalikes.forEach(c => {
+      contacts.push({
+        firstName: '',
+        lastName: '',
+        company: c.name,
+        domain: c.domain,
+        linkedin: c.linkedin,
+        companyInfo: {
+          employees: c.employees,
+          industry: c.industry,
+        },
+        sources: ['Apollo'],
+      });
+    });
+  } else if (type === 'discover' && data.firstName) {
+    contacts.push({
+      firstName: data.firstName,
+      lastName: data.lastName,
+      company: data.company,
+      linkedin: data.linkedin,
+      emails: data.emails || [],
+      phones: data.phones || [],
+      companyInfo: data.companyInfo,
+      sources: Object.keys(data.sources || {}),
+    });
+  } else if (type === 'watchlist' && data.contacts) {
+    data.contacts.forEach(c => {
+      contacts.push({
+        firstName: c.firstName,
+        lastName: c.lastName,
+        company: c.lastCompany,
+        title: c.lastTitle,
+        linkedin: c.linkedin,
+        email: c.email,
+        sources: ['Watchlist'],
+      });
+    });
+  } else if (Array.isArray(data)) {
+    return data; // Already an array of contacts
+  }
+  
+  return contacts;
+}
+
+
+// ============================================================================
 // HTML UI
 // ============================================================================
 
@@ -1470,6 +1635,47 @@ const HTML = `<!DOCTYPE html>
     function showError(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.classList.add('show'); }
     function hideError(id) { document.getElementById(id).classList.remove('show'); }
     
+    // CRM Export functions
+    let lastResultData = null;
+    let lastResultType = null;
+    
+    function storeForExport(data, type) {
+      lastResultData = data;
+      lastResultType = type;
+    }
+    
+    function exportToCRM(format) {
+      if (!lastResultData) {
+        alert('No data to export. Run a search first.');
+        return;
+      }
+      
+      const endpoint = format === 'hubspot' ? '/api/export/hubspot' : '/api/export/salesforce';
+      
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: lastResultData, type: lastResultType })
+      })
+      .then(resp => resp.blob())
+      .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = format === 'hubspot' ? 'hubspot_import.csv' : 'salesforce_leads.csv';
+        a.click();
+      });
+    }
+    
+    function renderExportButtons() {
+      return '<div style="margin-top:15px;padding-top:15px;border-top:1px solid rgba(255,255,255,0.1);display:flex;gap:10px;flex-wrap:wrap">' +
+        '<span style="color:#8892b0;font-size:0.85em;padding:8px 0">Export to CRM:</span>' +
+        '<button class="btn btn-sm btn-secondary" onclick="exportToCRM(\\'hubspot\\')">📤 HubSpot</button>' +
+        '<button class="btn btn-sm btn-secondary" onclick="exportToCRM(\\'salesforce\\')">📤 Salesforce</button>' +
+        '</div>';
+    }
+
+    
     // ============ DISCOVER ============
     async function discover() {
       const firstName = document.getElementById('d-firstName').value.trim();
@@ -1506,7 +1712,8 @@ const HTML = `<!DOCTYPE html>
         const d = await resp.json();
         let h = '<div class="result-card"><h3>🎯 ' + d.total + ' prospects found</h3><div class="result-grid">';
         d.prospects?.forEach(p => { h += '<div class="result-item"><div class="label">' + esc(p.title) + '</div><div class="value">' + esc(p.name) + '</div><div style="color:#8892b0;font-size:0.8em">' + esc(p.company) + '</div></div>'; });
-        h += '</div><div class="duration">' + d.duration + 'ms</div></div>';
+        h += '</div>' + renderExportButtons() + '<div class="duration">' + d.duration + 'ms</div></div>';
+        storeForExport(d, 'prospects');
         document.getElementById('p-results').innerHTML = h;
       } catch (e) { showError('p-error', e.message); }
       finally { showLoading('p-loading', false); }
@@ -1566,7 +1773,9 @@ const HTML = `<!DOCTYPE html>
           h += '<p style="color:#5a6a8a">No colleagues found. Try different roles or remove filters.</p>';
         }
         
+        h += renderExportButtons();
         h += '<div class="duration">' + d.duration + 'ms | FREE - no credits used</div></div>';
+        storeForExport(d, 'colleagues');
         document.getElementById('col-results').innerHTML = h;
       } catch (e) { showError('col-error', e.message); }
       finally { showLoading('col-loading', false); }
@@ -2039,9 +2248,10 @@ const HTML = `<!DOCTYPE html>
           h += '<p style="color:#5a6a8a">No similar companies found. Try adjusting filters.</p>';
         }
         
+        h += renderExportButtons();
         h += '<div class="duration">' + data.duration + 'ms</div>';
         h += '</div>';
-        
+        storeForExport(data, 'lookalikes');
         document.getElementById('look-results').innerHTML = h;
       } catch (e) { showError('look-error', e.message); }
       finally { showLoading('look-loading', false); }
@@ -2383,6 +2593,43 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+
+  // API: Export to HubSpot format
+  if (parsed.pathname === '/api/export/hubspot' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const { data, type } = JSON.parse(body);
+      console.log(`\x1b[36m📤 Export HubSpot: ${type}\x1b[0m`);
+      const contacts = normalizeForExport(data, type);
+      const csv = generateHubSpotCSV(contacts);
+      res.writeHead(200, { 
+        'Content-Type': 'text/csv', 
+        'Content-Disposition': 'attachment; filename="hubspot_import.csv"' 
+      });
+      res.end(csv);
+    });
+    return;
+  }
+
+  // API: Export to Salesforce format
+  if (parsed.pathname === '/api/export/salesforce' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const { data, type } = JSON.parse(body);
+      console.log(`\x1b[36m📤 Export Salesforce: ${type}\x1b[0m`);
+      const contacts = normalizeForExport(data, type);
+      const csv = generateSalesforceCSV(contacts);
+      res.writeHead(200, { 
+        'Content-Type': 'text/csv', 
+        'Content-Disposition': 'attachment; filename="salesforce_leads.csv"' 
+      });
+      res.end(csv);
+    });
+    return;
+  }
+
 
   // Slack endpoints
   if (parsed.pathname === '/slack/colleagues' && req.method === 'POST') {
