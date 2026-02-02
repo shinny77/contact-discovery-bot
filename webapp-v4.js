@@ -384,6 +384,102 @@ function getCompanyIntel(domainOrName) {
   return results;
 }
 
+
+// ============================================================================
+// ABN LOOKUP - Australian Business Number verification
+// ============================================================================
+
+function lookupABN(query) {
+  const start = Date.now();
+  const results = {
+    query: query,
+    matches: [],
+    duration: 0,
+  };
+  
+  // Clean the query - could be ABN number or company name
+  const cleanQuery = query.trim().replace(/\s+/g, ' ');
+  const isABNNumber = /^\d[\d\s]{9,}$/.test(cleanQuery.replace(/\s/g, ''));
+  
+  try {
+    let searchQuery;
+    if (isABNNumber) {
+      // Direct ABN lookup
+      const abnClean = cleanQuery.replace(/\s/g, '');
+      searchQuery = `ABN ${abnClean} site:abr.business.gov.au`;
+    } else {
+      // Company name search
+      searchQuery = `${cleanQuery} ABN site:abr.business.gov.au`;
+    }
+    
+    const serpUrl = `https://serpapi.com/search.json?api_key=${config.serp.apiKey}&engine=google&q=${encodeURIComponent(searchQuery)}&num=5&gl=au`;
+    const serpData = curlGet(serpUrl);
+    
+    if (serpData.organic_results?.length) {
+      serpData.organic_results.forEach(r => {
+        // Extract ABN from URL or title
+        const abnMatch = r.link?.match(/(\d{2}\s?\d{3}\s?\d{3}\s?\d{3})/);
+        const titleAbnMatch = r.title?.match(/ABN\s*(\d{2}\s?\d{3}\s?\d{3}\s?\d{3})/i);
+        
+        if (abnMatch || titleAbnMatch) {
+          const abn = (abnMatch?.[1] || titleAbnMatch?.[1]).replace(/\s/g, '');
+          const formattedABN = abn.replace(/(\d{2})(\d{3})(\d{3})(\d{3})/, '$1 $2 $3 $4');
+          
+          // Extract entity name from title
+          let entityName = r.snippet?.match(/Entity name:s*([^.]+)/i)?.[1]?.trim() || r.title?.replace(/Current details for ABN.*$/i, '').trim();
+          entityName = entityName?.replace(/ABN\s*\d+/gi, '').trim();
+          
+          // Extract status from snippet
+          const statusMatch = r.snippet?.match(/(Active|Cancelled|Suspended)\s+from\s+(\d{1,2}\s+\w+\s+\d{4})/i);
+          const entityTypeMatch = r.snippet?.match(/Entity type:\s*([^.]+)/i);
+          
+          // Avoid duplicates
+          if (!results.matches.find(m => m.abn === formattedABN)) {
+            results.matches.push({
+              abn: formattedABN,
+              abnRaw: abn,
+              entityName: entityName || r.snippet?.match(/Entity name:\s*([^.]+)/i)?.[1]?.trim(),
+              status: statusMatch?.[1] || 'Unknown',
+              statusDate: statusMatch?.[2],
+              entityType: entityTypeMatch?.[1]?.trim(),
+              url: r.link,
+              snippet: r.snippet?.substring(0, 200),
+            });
+          }
+        }
+      });
+    }
+  } catch (e) {
+    results.error = e.message;
+  }
+  
+  results.duration = Date.now() - start;
+  return results;
+}
+
+// Validate ABN checksum (Australian Business Number validation)
+function validateABN(abn) {
+  const abnClean = abn.replace(/\s/g, '');
+  if (!/^\d{11}$/.test(abnClean)) return { valid: false, error: 'ABN must be 11 digits' };
+  
+  // ABN validation algorithm
+  const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
+  let sum = 0;
+  
+  for (let i = 0; i < 11; i++) {
+    let digit = parseInt(abnClean[i]);
+    if (i === 0) digit -= 1; // Subtract 1 from first digit
+    sum += digit * weights[i];
+  }
+  
+  const valid = sum % 89 === 0;
+  return {
+    valid,
+    formatted: abnClean.replace(/(\d{2})(\d{3})(\d{3})(\d{3})/, '$1 $2 $3 $4'),
+    error: valid ? null : 'Invalid ABN checksum',
+  };
+}
+
 function enrichLinkedIn(linkedinUrl) {
   const start = Date.now();
   const results = { person: null, emails: [], phones: [], sources: {} };
@@ -623,6 +719,7 @@ const HTML = `<!DOCTYPE html>
       <div class="tab" data-tab="prospect">🎯 Prospect</div>
       <div class="tab new" data-tab="colleagues">👥 Colleagues</div>
       <div class="tab" data-tab="company">🏢 Company</div>
+      <div class="tab" data-tab="abn">🔢 ABN</div>
       <div class="tab" data-tab="linkedin">🔗 LinkedIn</div>
       <div class="tab" data-tab="bulk">📋 Bulk</div>
       <div class="tab new" data-tab="watchlist">👁️ Watchlist</div>
@@ -712,6 +809,30 @@ const HTML = `<!DOCTYPE html>
     </div>
     
     <!-- LinkedIn Panel -->
+    
+    <!-- ABN Panel -->
+    <div class="panel" id="panel-abn">
+      <div class="instructions">
+        <h4>🔢 Australian Business Number Lookup</h4>
+        <p>Search by ABN number or company name. Validates against the Australian Business Register (ABR).</p>
+      </div>
+      
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label>ABN Number or Company Name *</label>
+          <input type="text" id="abn-query" placeholder="53 102 443 916 or Atlassian">
+        </div>
+        <div class="form-group" style="flex:0">
+          <label>&nbsp;</label>
+          <button class="btn" onclick="lookupABN()">🔍 Search</button>
+        </div>
+      </div>
+      
+      <div class="loading" id="abn-loading"><div class="spinner"></div>Searching ABR...</div>
+      <div class="error" id="abn-error"></div>
+      <div class="results" id="abn-results"></div>
+    </div>
+    
     <div class="panel" id="panel-linkedin">
       <div class="form-row">
         <div class="form-group" style="flex:1"><label>LinkedIn URL *</label><input type="text" id="l-url" placeholder="https://linkedin.com/in/..."></div>
@@ -1070,6 +1191,60 @@ const HTML = `<!DOCTYPE html>
     function resetBulk() { bulkData = { csv: null, contacts: [], enriched: [] }; document.getElementById('file-info').style.display = 'none'; document.getElementById('btn-validate').style.display = 'none'; fileInput.value = ''; goToStep(1); }
     function goToStep(n) { document.querySelectorAll('.step').forEach(s => s.classList.remove('active')); document.getElementById('step-' + n).classList.add('active'); for (let i = 1; i <= 4; i++) { const d = document.getElementById('dot-' + i); d.classList.remove('active', 'completed'); if (i < n) d.classList.add('completed'); if (i === n) d.classList.add('active'); } }
     
+    
+    // ============ ABN LOOKUP ============
+    async function lookupABN() {
+      const query = document.getElementById('abn-query').value.trim();
+      if (!query) { showError('abn-error', 'Enter ABN or company name'); return; }
+      
+      showLoading('abn-loading', true);
+      hideError('abn-error');
+      document.getElementById('abn-results').innerHTML = '';
+      
+      try {
+        const resp = await fetch('/api/abn?q=' + encodeURIComponent(query));
+        const data = await resp.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        let h = '<div class="result-card">';
+        h += '<h3>🔢 ABN Results for "' + esc(query) + '"</h3>';
+        
+        if (data.matches?.length) {
+          h += '<div class="result-grid">';
+          data.matches.forEach(m => {
+            h += '<div class="colleague-card">';
+            h += '<div style="font-family:monospace;font-size:1.2em;color:#4ecdc4;margin-bottom:8px">' + esc(m.abn) + '</div>';
+            h += '<div class="colleague-name">' + esc(m.entityName || 'Unknown Entity') + '</div>';
+            h += '<div class="colleague-meta" style="margin:8px 0">';
+            h += '<span class="badge ' + (m.status === 'Active' ? 'badge-verified' : 'badge-source') + '">' + esc(m.status) + '</span>';
+            if (m.entityType) h += '<span class="badge badge-source">' + esc(m.entityType) + '</span>';
+            h += '</div>';
+            if (m.statusDate) h += '<div style="color:#8892b0;font-size:0.85em">Since: ' + esc(m.statusDate) + '</div>';
+            h += '<div style="margin-top:10px;display:flex;gap:8px">';
+            h += '<button class="btn btn-sm" onclick="copyVal(\\'' + m.abnRaw + '\\')">Copy ABN</button>';
+            h += '<a href="' + esc(m.url) + '" target="_blank" class="btn btn-sm btn-secondary">View on ABR →</a>';
+            h += '</div>';
+            h += '</div>';
+          });
+          h += '</div>';
+        } else {
+          h += '<p style="color:#5a6a8a;text-align:center;padding:20px">No ABN records found. Try a different search term.</p>';
+        }
+        
+        h += '<div class="duration">' + data.duration + 'ms</div>';
+        h += '</div>';
+        
+        document.getElementById('abn-results').innerHTML = h;
+      } catch (e) { showError('abn-error', e.message); }
+      finally { showLoading('abn-loading', false); }
+    }
+    
+    // Allow Enter key to search
+    document.getElementById('abn-query')?.addEventListener('keypress', e => {
+      if (e.key === 'Enter') lookupABN();
+    });
+
     // ============ WATCHLIST ============
     async function loadWatchlist() {
       try {
@@ -1267,6 +1442,29 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(getCompanyIntel(domain)));
     return;
   }
+
+  // API: ABN Lookup
+  if (parsed.pathname === '/api/abn') {
+    const { q } = parsed.query;
+    if (!q) { res.writeHead(400); res.end(JSON.stringify({ error: 'Query (q) required - ABN number or company name' })); return; }
+    console.log(`\x1b[36m🔢 ABN: ${q}\x1b[0m`);
+    const results = lookupABN(q);
+    console.log(`\x1b[32m✅ Found ${results.matches.length} ABN matches (${results.duration}ms)\x1b[0m`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(results));
+    return;
+  }
+
+  // API: ABN Validate
+  if (parsed.pathname === '/api/abn/validate') {
+    const { abn } = parsed.query;
+    if (!abn) { res.writeHead(400); res.end(JSON.stringify({ error: 'ABN required' })); return; }
+    const result = validateABN(abn);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+    return;
+  }
+
 
   // API: LinkedIn
   if (parsed.pathname === '/api/linkedin') {
