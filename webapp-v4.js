@@ -480,6 +480,130 @@ function validateABN(abn) {
   };
 }
 
+
+// ============================================================================
+// HIRING SIGNALS - Company job postings and growth indicators
+// ============================================================================
+
+function getHiringSignals(companyOrDomain) {
+  const start = Date.now();
+  const results = {
+    company: null,
+    jobCount: null,
+    jobSources: [],
+    careerPages: [],
+    growthIndicators: [],
+    duration: 0,
+  };
+  
+  // Normalize input
+  let domain = companyOrDomain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  let companyName = companyOrDomain;
+  if (domain.includes('.')) {
+    companyName = domain.split('.')[0];
+  } else {
+    domain = companyOrDomain.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+  }
+  
+  // 1. Get company info from Apollo
+  try {
+    const orgData = curlGet(
+      `https://api.apollo.io/v1/organizations/enrich?domain=${encodeURIComponent(domain)}`,
+      { 'x-api-key': config.apollo.apiKey }
+    );
+    
+    if (orgData.organization) {
+      const org = orgData.organization;
+      results.company = {
+        name: org.name,
+        domain: org.primary_domain,
+        employees: org.estimated_num_employees,
+        industry: org.industry,
+        founded: org.founded_year,
+        linkedin: org.linkedin_url,
+      };
+      companyName = org.name;
+      
+      // Growth indicator based on employee count
+      if (org.estimated_num_employees > 1000) {
+        results.growthIndicators.push({ type: 'large', label: 'Enterprise (1000+ employees)' });
+      } else if (org.estimated_num_employees > 200) {
+        results.growthIndicators.push({ type: 'growth', label: 'Scale-up (200-1000 employees)' });
+      } else if (org.estimated_num_employees > 50) {
+        results.growthIndicators.push({ type: 'growth', label: 'Growth stage (50-200 employees)' });
+      }
+    }
+  } catch (e) { /* continue */ }
+  
+  // 2. Search for job count from LinkedIn
+  try {
+    const liSearch = curlGet(
+      `https://serpapi.com/search.json?api_key=${config.serp.apiKey}&engine=google&q=${encodeURIComponent(companyName + ' jobs site:linkedin.com/company')}&num=5&gl=au`
+    );
+    
+    if (liSearch.organic_results) {
+      liSearch.organic_results.forEach(r => {
+        if (r.link?.includes('linkedin.com/company')) {
+          const jobMatch = r.snippet?.match(/(\d[\d,]*)\s*(?:job|open|position)/i);
+          if (jobMatch && !results.jobCount) {
+            results.jobCount = parseInt(jobMatch[1].replace(/,/g, ''));
+            results.jobSources.push({
+              source: 'LinkedIn',
+              count: results.jobCount,
+              url: r.link,
+            });
+          }
+        }
+      });
+    }
+  } catch (e) { /* continue */ }
+  
+  // 3. Search for career pages and job boards
+  try {
+    const careerSearch = curlGet(
+      `https://serpapi.com/search.json?api_key=${config.serp.apiKey}&engine=google&q=${encodeURIComponent(companyName + ' careers jobs Australia')}&num=8&gl=au`
+    );
+    
+    if (careerSearch.organic_results) {
+      careerSearch.organic_results.forEach(r => {
+        const url = r.link?.toLowerCase() || '';
+        const isCareerPage = url.includes('career') || url.includes('jobs') || url.includes('hiring') || 
+                           url.includes('seek.com') || url.includes('indeed.com') || url.includes('glassdoor');
+        
+        if (isCareerPage && results.careerPages.length < 5) {
+          // Try to extract job count
+          const countMatch = r.snippet?.match(/(\d[\d,]*)\s*(?:job|position|opening|role)/i);
+          
+          results.careerPages.push({
+            title: r.title?.substring(0, 60),
+            url: r.link,
+            snippet: r.snippet?.substring(0, 120),
+            jobCount: countMatch ? parseInt(countMatch[1].replace(/,/g, '')) : null,
+            source: url.includes('seek.com') ? 'SEEK' : 
+                   url.includes('indeed.com') ? 'Indeed' :
+                   url.includes('linkedin.com') ? 'LinkedIn' :
+                   url.includes('glassdoor') ? 'Glassdoor' : 'Careers Page',
+          });
+        }
+      });
+    }
+  } catch (e) { /* continue */ }
+  
+  // 4. Add growth indicators based on hiring activity
+  if (results.jobCount) {
+    if (results.jobCount > 100) {
+      results.growthIndicators.push({ type: 'hot', label: 'Aggressive hiring (100+ open roles)' });
+    } else if (results.jobCount > 30) {
+      results.growthIndicators.push({ type: 'active', label: 'Active hiring (30+ open roles)' });
+    } else if (results.jobCount > 10) {
+      results.growthIndicators.push({ type: 'moderate', label: 'Moderate hiring (10+ open roles)' });
+    }
+  }
+  
+  results.duration = Date.now() - start;
+  return results;
+}
+
 function enrichLinkedIn(linkedinUrl) {
   const start = Date.now();
   const results = { person: null, emails: [], phones: [], sources: {} };
@@ -720,6 +844,7 @@ const HTML = `<!DOCTYPE html>
       <div class="tab new" data-tab="colleagues">👥 Colleagues</div>
       <div class="tab" data-tab="company">🏢 Company</div>
       <div class="tab" data-tab="abn">🔢 ABN</div>
+      <div class="tab" data-tab="hiring">💼 Hiring</div>
       <div class="tab" data-tab="linkedin">🔗 LinkedIn</div>
       <div class="tab" data-tab="bulk">📋 Bulk</div>
       <div class="tab new" data-tab="watchlist">👁️ Watchlist</div>
@@ -831,6 +956,30 @@ const HTML = `<!DOCTYPE html>
       <div class="loading" id="abn-loading"><div class="spinner"></div>Searching ABR...</div>
       <div class="error" id="abn-error"></div>
       <div class="results" id="abn-results"></div>
+    </div>
+    
+    
+    <!-- Hiring Panel -->
+    <div class="panel" id="panel-hiring">
+      <div class="instructions">
+        <h4>💼 Hiring Signals</h4>
+        <p>See which companies are actively hiring. High hiring activity often indicates growth, budget, and openness to partnerships.</p>
+      </div>
+      
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label>Company Name or Domain *</label>
+          <input type="text" id="hiring-company" placeholder="Canva or canva.com">
+        </div>
+        <div class="form-group" style="flex:0">
+          <label>&nbsp;</label>
+          <button class="btn" onclick="getHiring()">💼 Check Hiring</button>
+        </div>
+      </div>
+      
+      <div class="loading" id="hiring-loading"><div class="spinner"></div>Checking job boards...</div>
+      <div class="error" id="hiring-error"></div>
+      <div class="results" id="hiring-results"></div>
     </div>
     
     <div class="panel" id="panel-linkedin">
@@ -1245,6 +1394,75 @@ const HTML = `<!DOCTYPE html>
       if (e.key === 'Enter') lookupABN();
     });
 
+    
+    // ============ HIRING SIGNALS ============
+    async function getHiring() {
+      const company = document.getElementById('hiring-company').value.trim();
+      if (!company) { showError('hiring-error', 'Enter company name or domain'); return; }
+      
+      showLoading('hiring-loading', true);
+      hideError('hiring-error');
+      document.getElementById('hiring-results').innerHTML = '';
+      
+      try {
+        const resp = await fetch('/api/hiring?company=' + encodeURIComponent(company));
+        const data = await resp.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        let h = '<div class="result-card">';
+        h += '<h3>💼 ' + esc(data.company?.name || company) + '</h3>';
+        
+        // Company overview
+        if (data.company) {
+          h += '<div class="result-grid" style="margin-bottom:20px">';
+          if (data.company.employees) h += '<div class="result-item"><div class="label">Employees</div><div class="value">' + data.company.employees.toLocaleString() + '</div></div>';
+          if (data.company.industry) h += '<div class="result-item"><div class="label">Industry</div><div class="value">' + esc(data.company.industry) + '</div></div>';
+          if (data.company.founded) h += '<div class="result-item"><div class="label">Founded</div><div class="value">' + data.company.founded + '</div></div>';
+          if (data.jobCount) h += '<div class="result-item"><div class="label">Open Jobs</div><div class="value" style="font-size:1.5em;color:#4ecdc4">' + data.jobCount + '</div></div>';
+          h += '</div>';
+        }
+        
+        // Growth indicators
+        if (data.growthIndicators?.length) {
+          h += '<div style="margin-bottom:20px">';
+          data.growthIndicators.forEach(g => {
+            const color = g.type === 'hot' ? '#ff6b6b' : g.type === 'active' ? '#ffc107' : '#4ecdc4';
+            h += '<span class="badge" style="background:' + color + '20;color:' + color + ';margin-right:8px;padding:6px 12px">' + esc(g.label) + '</span>';
+          });
+          h += '</div>';
+        }
+        
+        // Career pages
+        if (data.careerPages?.length) {
+          h += '<h4 style="color:#8892b0;margin:15px 0 10px">📍 Job Sources</h4>';
+          h += '<div class="result-grid">';
+          data.careerPages.forEach(p => {
+            h += '<div class="result-item">';
+            h += '<div class="label">' + esc(p.source) + (p.jobCount ? ' (' + p.jobCount + ' jobs)' : '') + '</div>';
+            h += '<div class="value"><a href="' + esc(p.url) + '" target="_blank">' + esc(p.title || 'View Jobs') + '</a></div>';
+            h += '</div>';
+          });
+          h += '</div>';
+        }
+        
+        // LinkedIn link
+        if (data.company?.linkedin) {
+          h += '<div style="margin-top:20px"><a href="' + esc(data.company.linkedin) + '/jobs" target="_blank" class="btn btn-secondary">View all jobs on LinkedIn →</a></div>';
+        }
+        
+        h += '<div class="duration">' + data.duration + 'ms</div>';
+        h += '</div>';
+        
+        document.getElementById('hiring-results').innerHTML = h;
+      } catch (e) { showError('hiring-error', e.message); }
+      finally { showLoading('hiring-loading', false); }
+    }
+    
+    document.getElementById('hiring-company')?.addEventListener('keypress', e => {
+      if (e.key === 'Enter') getHiring();
+    });
+
     // ============ WATCHLIST ============
     async function loadWatchlist() {
       try {
@@ -1464,6 +1682,19 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(result));
     return;
   }
+
+  // API: Hiring Signals
+  if (parsed.pathname === '/api/hiring') {
+    const { company } = parsed.query;
+    if (!company) { res.writeHead(400); res.end(JSON.stringify({ error: 'Company name or domain required' })); return; }
+    console.log(`\x1b[36m💼 Hiring: ${company}\x1b[0m`);
+    const results = getHiringSignals(company);
+    console.log(`\x1b[32m✅ Found ${results.jobCount || 0} jobs, ${results.careerPages.length} sources (${results.duration}ms)\x1b[0m`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(results));
+    return;
+  }
+
 
 
   // API: LinkedIn
