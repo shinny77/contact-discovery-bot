@@ -604,6 +604,118 @@ function getHiringSignals(companyOrDomain) {
   return results;
 }
 
+
+// ============================================================================
+// TECH STACK - Company technology lookup
+// ============================================================================
+
+function getTechStack(companyOrDomain) {
+  const start = Date.now();
+  const results = {
+    company: null,
+    technologies: [],
+    byCategory: {},
+    totalCount: 0,
+    duration: 0,
+  };
+  
+  // Normalize domain
+  let domain = companyOrDomain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  if (!domain.includes('.')) {
+    domain = companyOrDomain.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+  }
+  
+  try {
+    const orgData = curlGet(
+      `https://api.apollo.io/v1/organizations/enrich?domain=${encodeURIComponent(domain)}`,
+      { 'x-api-key': config.apollo.apiKey }
+    );
+    
+    if (orgData.organization) {
+      const org = orgData.organization;
+      results.company = {
+        name: org.name,
+        domain: org.primary_domain,
+        employees: org.estimated_num_employees,
+        industry: org.industry,
+      };
+      
+      if (org.current_technologies?.length) {
+        results.technologies = org.current_technologies.map(t => ({
+          name: t.name,
+          category: t.category || 'Other',
+          uid: t.uid,
+        }));
+        results.totalCount = results.technologies.length;
+        
+        // Group by category
+        results.technologies.forEach(t => {
+          if (!results.byCategory[t.category]) {
+            results.byCategory[t.category] = [];
+          }
+          results.byCategory[t.category].push(t.name);
+        });
+      }
+    }
+  } catch (e) {
+    results.error = e.message;
+  }
+  
+  results.duration = Date.now() - start;
+  return results;
+}
+
+// Search for companies using a specific technology
+function searchByTech(techName, location, limit = 10) {
+  const start = Date.now();
+  const results = {
+    technology: techName,
+    companies: [],
+    total: 0,
+    duration: 0,
+  };
+  
+  try {
+    // Use Apollo organization search with technology filter
+    const params = new URLSearchParams();
+    params.append('organization_technology_names[]', techName);
+    if (location) {
+      params.append('organization_locations[]', location);
+    }
+    params.append('per_page', Math.min(limit, 25).toString());
+    
+    // Search via people to get organizations
+    const apolloData = curlPost(
+      `https://api.apollo.io/api/v1/mixed_people/api_search?${params}`,
+      { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
+      {}
+    );
+    
+    if (apolloData.people?.length) {
+      // Extract unique companies
+      const seen = new Set();
+      apolloData.people.forEach(p => {
+        if (p.organization && !seen.has(p.organization.id)) {
+          seen.add(p.organization.id);
+          results.companies.push({
+            name: p.organization.name,
+            domain: p.organization.primary_domain,
+            employees: p.organization.estimated_num_employees,
+            industry: p.organization.industry,
+            linkedin: p.organization.linkedin_url,
+          });
+        }
+      });
+      results.total = results.companies.length;
+    }
+  } catch (e) {
+    results.error = e.message;
+  }
+  
+  results.duration = Date.now() - start;
+  return results;
+}
+
 function enrichLinkedIn(linkedinUrl) {
   const start = Date.now();
   const results = { person: null, emails: [], phones: [], sources: {} };
@@ -845,6 +957,7 @@ const HTML = `<!DOCTYPE html>
       <div class="tab" data-tab="company">🏢 Company</div>
       <div class="tab" data-tab="abn">🔢 ABN</div>
       <div class="tab" data-tab="hiring">💼 Hiring</div>
+      <div class="tab" data-tab="tech">🔧 Tech Stack</div>
       <div class="tab" data-tab="linkedin">🔗 LinkedIn</div>
       <div class="tab" data-tab="bulk">📋 Bulk</div>
       <div class="tab new" data-tab="watchlist">👁️ Watchlist</div>
@@ -980,6 +1093,66 @@ const HTML = `<!DOCTYPE html>
       <div class="loading" id="hiring-loading"><div class="spinner"></div>Checking job boards...</div>
       <div class="error" id="hiring-error"></div>
       <div class="results" id="hiring-results"></div>
+    </div>
+    
+    
+    <!-- Tech Stack Panel -->
+    <div class="panel" id="panel-tech">
+      <div class="instructions">
+        <h4>🔧 Tech Stack Lookup</h4>
+        <p>See what technologies a company uses, or find companies using specific software.</p>
+      </div>
+      
+      <div style="display:flex;gap:20px;margin-bottom:20px">
+        <button class="btn btn-sm" onclick="showTechMode('lookup')" id="tech-mode-lookup" style="opacity:1">Company Lookup</button>
+        <button class="btn btn-sm btn-secondary" onclick="showTechMode('search')" id="tech-mode-search">Find by Tech</button>
+      </div>
+      
+      <!-- Lookup Mode -->
+      <div id="tech-lookup-form">
+        <div class="form-row">
+          <div class="form-group" style="flex:2">
+            <label>Company Name or Domain *</label>
+            <input type="text" id="tech-company" placeholder="atlassian.com">
+          </div>
+          <div class="form-group" style="flex:0">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="getTechStack()">🔧 Get Tech Stack</button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Search Mode -->
+      <div id="tech-search-form" style="display:none">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Technology *</label>
+            <input type="text" id="tech-name" placeholder="Salesforce, HubSpot, React...">
+          </div>
+          <div class="form-group">
+            <label>Location (optional)</label>
+            <input type="text" id="tech-location" placeholder="Sydney, Australia">
+          </div>
+          <div class="form-group" style="flex:0">
+            <label>&nbsp;</label>
+            <button class="btn" onclick="searchByTech()">🔍 Find Companies</button>
+          </div>
+        </div>
+        <div class="quick-roles" style="margin-top:10px">
+          <span class="quick-role" onclick="setTech('Salesforce')">Salesforce</span>
+          <span class="quick-role" onclick="setTech('HubSpot')">HubSpot</span>
+          <span class="quick-role" onclick="setTech('AWS')">AWS</span>
+          <span class="quick-role" onclick="setTech('Google Cloud')">GCP</span>
+          <span class="quick-role" onclick="setTech('Microsoft Azure')">Azure</span>
+          <span class="quick-role" onclick="setTech('Slack')">Slack</span>
+          <span class="quick-role" onclick="setTech('Jira')">Jira</span>
+          <span class="quick-role" onclick="setTech('React')">React</span>
+        </div>
+      </div>
+      
+      <div class="loading" id="tech-loading"><div class="spinner"></div>Loading tech data...</div>
+      <div class="error" id="tech-error"></div>
+      <div class="results" id="tech-results"></div>
     </div>
     
     <div class="panel" id="panel-linkedin">
@@ -1463,6 +1636,126 @@ const HTML = `<!DOCTYPE html>
       if (e.key === 'Enter') getHiring();
     });
 
+
+    // ============ TECH STACK ============
+    function showTechMode(mode) {
+      document.getElementById('tech-lookup-form').style.display = mode === 'lookup' ? 'block' : 'none';
+      document.getElementById('tech-search-form').style.display = mode === 'search' ? 'block' : 'none';
+      document.getElementById('tech-mode-lookup').classList.toggle('btn-secondary', mode !== 'lookup');
+      document.getElementById('tech-mode-lookup').style.opacity = mode === 'lookup' ? '1' : '0.7';
+      document.getElementById('tech-mode-search').classList.toggle('btn-secondary', mode !== 'search');
+      document.getElementById('tech-mode-search').style.opacity = mode === 'search' ? '1' : '0.7';
+      document.getElementById('tech-results').innerHTML = '';
+    }
+    
+    function setTech(name) {
+      document.getElementById('tech-name').value = name;
+    }
+    
+    async function getTechStack() {
+      const company = document.getElementById('tech-company').value.trim();
+      if (!company) { showError('tech-error', 'Enter company name or domain'); return; }
+      
+      showLoading('tech-loading', true);
+      hideError('tech-error');
+      document.getElementById('tech-results').innerHTML = '';
+      
+      try {
+        const resp = await fetch('/api/tech?company=' + encodeURIComponent(company));
+        const data = await resp.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        let h = '<div class="result-card">';
+        h += '<h3>🔧 ' + esc(data.company?.name || company) + '</h3>';
+        
+        if (data.company) {
+          h += '<p style="color:#8892b0;margin-bottom:15px">';
+          if (data.company.employees) h += data.company.employees.toLocaleString() + ' employees';
+          if (data.company.industry) h += ' • ' + data.company.industry;
+          h += '</p>';
+        }
+        
+        h += '<p style="margin-bottom:20px"><strong>' + data.totalCount + '</strong> technologies detected</p>';
+        
+        if (Object.keys(data.byCategory).length) {
+          // Sort categories by count
+          const sorted = Object.entries(data.byCategory).sort((a,b) => b[1].length - a[1].length);
+          
+          h += '<div class="result-grid">';
+          sorted.slice(0, 12).forEach(([cat, techs]) => {
+            h += '<div class="result-item">';
+            h += '<div class="label">' + esc(cat) + ' (' + techs.length + ')</div>';
+            h += '<div class="value" style="font-size:0.85em">' + techs.slice(0, 6).map(t => esc(t)).join(', ');
+            if (techs.length > 6) h += '...';
+            h += '</div>';
+            h += '</div>';
+          });
+          h += '</div>';
+        } else {
+          h += '<p style="color:#5a6a8a">No technology data available for this company.</p>';
+        }
+        
+        h += '<div class="duration">' + data.duration + 'ms</div>';
+        h += '</div>';
+        
+        document.getElementById('tech-results').innerHTML = h;
+      } catch (e) { showError('tech-error', e.message); }
+      finally { showLoading('tech-loading', false); }
+    }
+    
+    async function searchByTech() {
+      const tech = document.getElementById('tech-name').value.trim();
+      const location = document.getElementById('tech-location').value.trim();
+      if (!tech) { showError('tech-error', 'Enter technology name'); return; }
+      
+      showLoading('tech-loading', true);
+      hideError('tech-error');
+      document.getElementById('tech-results').innerHTML = '';
+      
+      try {
+        let url = '/api/tech/search?tech=' + encodeURIComponent(tech);
+        if (location) url += '&location=' + encodeURIComponent(location);
+        
+        const resp = await fetch(url);
+        const data = await resp.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        let h = '<div class="result-card">';
+        h += '<h3>🔍 Companies using ' + esc(tech) + '</h3>';
+        if (location) h += '<p style="color:#8892b0">Location: ' + esc(location) + '</p>';
+        h += '<p style="margin:15px 0">Found <strong>' + data.companies.length + '</strong> companies</p>';
+        
+        if (data.companies.length) {
+          h += '<div class="result-grid">';
+          data.companies.forEach(c => {
+            h += '<div class="colleague-card">';
+            h += '<div class="colleague-name">' + esc(c.name) + '</div>';
+            if (c.industry) h += '<div class="colleague-title">' + esc(c.industry) + '</div>';
+            h += '<div class="colleague-meta">';
+            if (c.employees) h += '<span>👥 ' + c.employees.toLocaleString() + '</span>';
+            if (c.domain) h += '<span>🌐 ' + esc(c.domain) + '</span>';
+            h += '</div>';
+            if (c.linkedin) h += '<a href="' + esc(c.linkedin) + '" target="_blank" class="btn btn-sm btn-secondary" style="margin-top:8px">LinkedIn →</a>';
+            h += '</div>';
+          });
+          h += '</div>';
+        } else {
+          h += '<p style="color:#5a6a8a">No companies found. Try a different technology or remove location filter.</p>';
+        }
+        
+        h += '<div class="duration">' + data.duration + 'ms</div>';
+        h += '</div>';
+        
+        document.getElementById('tech-results').innerHTML = h;
+      } catch (e) { showError('tech-error', e.message); }
+      finally { showLoading('tech-loading', false); }
+    }
+    
+    document.getElementById('tech-company')?.addEventListener('keypress', e => { if (e.key === 'Enter') getTechStack(); });
+    document.getElementById('tech-name')?.addEventListener('keypress', e => { if (e.key === 'Enter') searchByTech(); });
+
     // ============ WATCHLIST ============
     async function loadWatchlist() {
       try {
@@ -1696,6 +1989,31 @@ const server = http.createServer((req, res) => {
   }
 
 
+  // API: Tech Stack Lookup
+  if (parsed.pathname === '/api/tech') {
+    const { company } = parsed.query;
+    if (!company) { res.writeHead(400); res.end(JSON.stringify({ error: 'Company name or domain required' })); return; }
+    console.log(`\x1b[36m🔧 Tech Stack: ${company}\x1b[0m`);
+    const results = getTechStack(company);
+    console.log(`\x1b[32m✅ Found ${results.totalCount} technologies (${results.duration}ms)\x1b[0m`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(results));
+    return;
+  }
+
+  // API: Search by Technology
+  if (parsed.pathname === '/api/tech/search') {
+    const { tech, location, limit } = parsed.query;
+    if (!tech) { res.writeHead(400); res.end(JSON.stringify({ error: 'Technology name required' })); return; }
+    console.log(`\x1b[36m🔧 Tech Search: ${tech} in ${location || 'any location'}\x1b[0m`);
+    const results = searchByTech(tech, location, parseInt(limit) || 10);
+    console.log(`\x1b[32m✅ Found ${results.companies.length} companies (${results.duration}ms)\x1b[0m`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(results));
+    return;
+  }
+
+
 
   // API: LinkedIn
   if (parsed.pathname === '/api/linkedin') {
@@ -1871,6 +2189,49 @@ const server = http.createServer((req, res) => {
           msg += `\n📍 *Job Sources:*\n`;
           results.careerPages.slice(0, 4).forEach(p => {
             msg += `• <${p.url}|${p.source}>${p.jobCount ? ' (' + p.jobCount + ' jobs)' : ''}\n`;
+          });
+        }
+        
+        msg += `\n_${results.duration}ms_`;
+        
+        if (response_url) {
+          curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+        }
+      });
+    });
+    return;
+  }
+
+
+  // Slack: /tech command
+  if (parsed.pathname === '/slack/tech' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const params = querystring.parse(body);
+      const { text, response_url } = params;
+      console.log(`\x1b[35m📱 Slack /tech: ${text}\x1b[0m`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ response_type: 'in_channel', text: `🔧 Looking up tech stack for ${text}...` }));
+      
+      setImmediate(() => {
+        const results = getTechStack(text.trim());
+        
+        let msg = `🔧 *${results.company?.name || text}*\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        
+        if (results.company) {
+          if (results.company.employees) msg += `👥 ${results.company.employees.toLocaleString()} employees\n`;
+          if (results.company.industry) msg += `🏷️ ${results.company.industry}\n`;
+        }
+        
+        msg += `\n📊 *${results.totalCount} technologies*\n`;
+        
+        if (Object.keys(results.byCategory).length) {
+          const sorted = Object.entries(results.byCategory).sort((a,b) => b[1].length - a[1].length);
+          sorted.slice(0, 8).forEach(([cat, techs]) => {
+            msg += `\n*${cat}* (${techs.length})\n`;
+            msg += `${techs.slice(0, 5).join(', ')}${techs.length > 5 ? '...' : ''}\n`;
           });
         }
         
