@@ -1,9 +1,7 @@
 {
   "name": "contact-discovery-bot",
-  "version": "6.0.0",
+  "version": "6.1.0",
   "main": "webapp-v4.js",
-  "scripts": {
-    "start": "node webapp-v4.js"
-  },
+  "scripts": { "start": "node webapp-v4.js" },
   "engines": { "node": ">=18.0.0" }
 }
