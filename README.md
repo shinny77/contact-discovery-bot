@@ -1,246 +1,301 @@
 # Contact Discovery Bot v6.8
 
-Multi-source contact discovery for AU/NZ business contacts. Find emails, phones, company intel, and more.
+Multi-source contact discovery platform for AU/NZ business contacts. Aggregates data from Apollo, Lusha, Firmable, and SerpAPI.
 
-## Quick Start
+## Features
 
-```bash
-npm install
-npm start
-```
+### 👤 Discover
+Find contact details for any person using all available sources.
 
-Open http://localhost:3000
+**Sources:** Apollo + Lusha + Firmable + SerpAPI
+
+**Input:** First name, last name, company, domain (optional)
+
+**Returns:**
+- Work emails (Apollo)
+- Personal emails (Lusha)
+- Phone numbers (Lusha)
+- LinkedIn URL
+- Company info (Firmable)
+
+---
+
+### 🎯 Prospect (FREE)
+Search for leads by job title and location. No API credits consumed.
+
+**Sources:** Apollo (free tier)
+
+**Input:** Job titles, locations, seniority level
+
+**Returns:** List of matching prospects with name, title, company, LinkedIn
+
+---
+
+### 👥 Colleagues (FREE)
+Find specific roles at any company.
+
+**Sources:** Firmable + Apollo
+
+**Input:** Company domain, roles (CEO, CFO, etc.)
+
+**Returns:** List of employees matching those roles
+
+**Enrich:** Click "Get Contact" to enrich with emails/phones from Apollo + Lusha
+
+---
+
+### 🏢 Company
+Full company intelligence profile.
+
+**Sources:** Firmable + Apollo
+
+**Input:** Company domain or name
+
+**Returns:**
+- Company name, domain, description
+- Employee count (AU + global)
+- ABN/ACN
+- Industry
+- Tech stack
+- LinkedIn URL
+
+---
+
+### 🔢 ABN (FREE)
+Australian Business Number lookup and validation.
+
+**Sources:** SerpAPI + Firmable
+
+**Input:** ABN number or company name
+
+**Returns:**
+- ABN number
+- Entity name
+- Status (Active/Cancelled)
+- Entity type
+- Link to ABR
+
+---
+
+### 💼 Hiring (FREE)
+See which companies are actively hiring - indicates growth and budget.
+
+**Sources:** Apollo + SerpAPI
+
+**Input:** Company name or domain
+
+**Returns:**
+- Open job count
+- Growth indicators (Aggressive/Active/Moderate)
+- Links to career pages (LinkedIn, SEEK, Indeed)
+
+---
+
+### 🔧 Tech Stack
+See what technologies a company uses.
+
+**Sources:** Apollo
+
+**Input:** Company domain
+
+**Returns:** Technologies grouped by category (Cloud, Analytics, CMS, etc.)
+
+---
+
+### 🔄 Lookalikes (FREE)
+Find companies similar to one you like.
+
+**Sources:** Apollo
+
+**Input:** Seed company domain
+
+**Returns:** Similar companies by industry, size, and age with similarity score
+
+---
+
+### 🔗 LinkedIn
+Enrich any LinkedIn profile URL with contact details.
+
+**Sources:** Lusha + Apollo
+
+**Input:** LinkedIn profile URL
+
+**Returns:**
+- Emails (work + personal)
+- Phone numbers (mobile + work)
+- Current title and company
+
+---
+
+### 📋 Bulk Upload
+Upload CSV of contacts for bulk enrichment with compliance workflow.
+
+**Features:**
+- CSV validation
+- Duplicate detection
+- DNC (Do Not Contact) warnings
+- AU phone number DNC checking
+- Max 100 contacts per batch
+- Export to CSV
+
+---
+
+### 👁️ Watchlist
+Track contacts for job changes.
+
+**Features:**
+- Add contacts to watchlist
+- Check for role/company changes
+- Get notified when contacts move
+
+---
+
+### 📊 Dashboard
+Usage statistics and API health metrics.
+
+**Shows:**
+- Total requests
+- Enrichment success rates
+- Last 7 days activity
+- Top endpoints
+- API health by provider
+
+---
+
+### 📤 CRM Export
+Export results to HubSpot or Salesforce format.
+
+**Available on:** Colleagues, Prospects, Lookalikes results
+
+**Formats:**
+- HubSpot contact import CSV
+- Salesforce lead import CSV
 
 ---
 
 ## Slack Commands
 
-### `/cdhelp`
-Show all available commands and usage examples.
-
----
-
-### Person Lookup
-
-```
-/discover Tom Cowan, TDM Growth Partners
-/discover Jane Smith @ Atlassian
-```
-→ Find emails, phones, LinkedIn for a specific person
-
----
-
-### Prospecting ✨ FREE
-
-```
-/prospect CEO Sydney 10
-/prospect CFO, Director Melbourne fintech
-```
-→ Find leads by job title, location, and keywords
-→ Returns: name, title, company, LinkedIn
-
----
-
-### Find Colleagues ✨ FREE
-
-```
-/colleagues atlassian.com CFO
-/colleagues canva.com CEO CTO VP
-/colleagues tdmgrowthpartners.com
-```
-→ Find people with specific roles at any company
-→ Tip: Combine multiple roles in one command
-
----
-
-### Company Intelligence
-
-```
-/company atlassian.com
-/company Canva
-```
-→ Full company profile: employees, industry, ABN, tech stack
-
----
-
-### LinkedIn Enrichment
-
-```
-/linkedin https://linkedin.com/in/tom-cowan
-```
-→ Get contact info from any LinkedIn profile URL
-
----
-
-### ABN Lookup ✨ FREE
-
-```
-/abn Atlassian
-/abn 53 102 443 916
-```
-→ Australian Business Number verification
-→ Shows: entity name, status, type, ABR link
-
----
-
-### Hiring Signals ✨ FREE
-
-```
-/hiring canva.com
-/hiring Atlassian
-```
-→ See open job counts, growth indicators
-→ Links to SEEK, LinkedIn, Indeed, career pages
-
----
-
-### Tech Stack
-
-```
-/tech atlassian.com
-```
-→ See what technologies a company uses
-→ Grouped by category (Cloud, Analytics, CMS, etc)
-
----
-
-### Lookalike Companies ✨ FREE
-
-```
-/lookalike atlassian.com
-/lookalike canva.com
-```
-→ Find similar companies by industry, size, age
-→ Includes similarity score (0-100%)
-
----
-
-### Job Change Alerts (Watchlist)
-
-```
-/watchlist                      List all watched contacts
-/watchlist add Tom Cowan TDM    Add contact to watchlist
-/watchlist check                Check all for job changes
-/watchlist remove <id>          Remove from watchlist
-```
-→ Track contacts and get notified when they change jobs
-
----
-
-## Slack Setup
-
-1. Create Slack app at https://api.slack.com/apps
-2. Add slash commands with these Request URLs:
-
-| Command | Request URL |
-|---------|-------------|
-| `/cdhelp` | `https://your-server/slack/cdhelp` |
-| `/discover` | `https://your-server/slack/discover` |
-| `/prospect` | `https://your-server/slack/prospect` |
-| `/colleagues` | `https://your-server/slack/colleagues` |
-| `/company` | `https://your-server/slack/company` |
-| `/linkedin` | `https://your-server/slack/linkedin` |
-| `/abn` | `https://your-server/slack/abn` |
-| `/hiring` | `https://your-server/slack/hiring` |
-| `/tech` | `https://your-server/slack/tech` |
-| `/lookalike` | `https://your-server/slack/lookalike` |
-| `/watchlist` | `https://your-server/slack/watchlist` |
-
-3. Install app to workspace
-
----
-
-## Web UI Features
-
-| Tab | Feature |
-|-----|---------|
-| 👤 Discover | Person lookup with all data sources |
-| 🎯 Prospect | Search leads by criteria |
-| 👥 Colleagues | Find roles at companies |
-| 🏢 Company | Full company intelligence |
-| 🔢 ABN | Australian Business Number lookup |
-| 💼 Hiring | Job postings and growth signals |
-| 🔧 Tech Stack | Company technology lookup |
-| 🔄 Lookalikes | Find similar companies |
-| 🔗 LinkedIn | Enrich from LinkedIn URL |
-| 📋 Bulk | CSV upload with compliance workflow |
-| 👁️ Watchlist | Job change monitoring |
-| 📊 Dashboard | Usage stats and metrics |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `/cdhelp` | Show all commands | `/cdhelp` |
+| `/discover` | Find person's contact info | `/discover Tom Cowan, TDM Growth Partners` |
+| `/prospect` | Search for leads | `/prospect CEO Sydney 10` |
+| `/colleagues` | Find roles at company | `/colleagues atlassian.com CFO CTO` |
+| `/company` | Company intelligence | `/company canva.com` |
+| `/linkedin` | Enrich LinkedIn URL | `/linkedin https://linkedin.com/in/...` |
+| `/abn` | ABN lookup | `/abn Atlassian` |
+| `/hiring` | Hiring signals | `/hiring canva.com` |
+| `/tech` | Tech stack | `/tech atlassian.com` |
+| `/lookalike` | Similar companies | `/lookalike atlassian.com` |
+| `/watchlist` | Manage watchlist | `/watchlist add Tom Cowan TDM` |
 
 ---
 
 ## API Endpoints
 
-### Person & Company
-- `GET /api/discover?firstName=&lastName=&company=`
-- `POST /api/prospect` - `{titles, locations, seniorities, limit}`
-- `POST /api/colleagues` - `{domain, roles, limit}`
-- `GET /api/company?domain=`
-- `GET /api/linkedin?url=`
+### Person Enrichment
+```
+GET  /api/discover?firstName=&lastName=&company=&domain=
+POST /api/prospect {titles, locations, seniorities, limit}
+POST /api/colleagues {domain, roles, seniority, limit}
+POST /api/colleagues/enrich {firstName, lastName, linkedin}
+GET  /api/linkedin?url=
+```
 
-### Business Intel
-- `GET /api/abn?q=` - ABN lookup
-- `GET /api/hiring?company=` - Hiring signals
-- `GET /api/tech?company=` - Tech stack
-- `GET /api/tech/search?tech=&location=` - Find by tech
-- `GET /api/lookalike?company=&limit=` - Similar companies
+### Company Intelligence
+```
+GET /api/company?domain=
+GET /api/abn?q=
+GET /api/hiring?company=
+GET /api/tech?company=
+GET /api/lookalike?company=&limit=
+```
 
 ### Bulk Operations
-- `GET /api/bulk/template` - Download CSV template
-- `POST /api/bulk/validate` - Validate CSV
-- `POST /api/bulk/enrich` - Enrich contacts
-- `POST /api/bulk/download` - Download results
+```
+GET  /api/bulk/template
+POST /api/bulk/validate {csv}
+POST /api/bulk/enrich {contacts}
+POST /api/bulk/download {results}
+```
 
 ### CRM Export
-- `POST /api/export/hubspot` - HubSpot format
-- `POST /api/export/salesforce` - Salesforce format
+```
+POST /api/export/hubspot {data, type}
+POST /api/export/salesforce {data, type}
+```
 
 ### Watchlist
-- `GET /api/watchlist` - List watched
-- `POST /api/watchlist` - Add contact
-- `DELETE /api/watchlist?id=` - Remove
-- `POST /api/watchlist/check` - Check for changes
+```
+GET    /api/watchlist
+POST   /api/watchlist {firstName, lastName, company, linkedin}
+DELETE /api/watchlist?id=
+POST   /api/watchlist/check
+```
 
-### Stats
-- `GET /api/stats` - Usage dashboard
-- `POST /api/stats/reset` - Reset stats
+### System
+```
+GET  /health
+GET  /api/stats
+POST /api/stats/reset
+```
 
 ---
 
 ## Data Sources
 
-| Source | Coverage | Best For |
-|--------|----------|----------|
-| Apollo.io | Global | Emails, people search (FREE tier) |
-| Firmable | AU/NZ | ABN, AU employees, mobiles |
-| Lusha | Global | Verified emails and phones |
-| SerpAPI | Global | LinkedIn discovery, ABN lookup |
+| Source | Type | Best For |
+|--------|------|----------|
+| **Apollo.io** | Global B2B | Work emails, company data, prospecting |
+| **Lusha** | Global | Verified emails, phone numbers |
+| **Firmable** | AU/NZ | ABN, AU employees, local data |
+| **SerpAPI** | Search | LinkedIn discovery, ABN lookup, job postings |
 
 ---
 
-## Environment Variables
+## Setup
 
-```env
-PORT=3000
-SLACK_SIGNING_SECRET=your-secret
-
-# API Keys
-SERP_API_KEY=your-key
-APOLLO_API_KEY=your-key
-FIRMABLE_API_KEY=your-key
-LUSHA_API_KEY=your-key
+### Local Development
+```bash
+git clone https://github.com/shinny77/contact-discovery-bot.git
+cd contact-discovery-bot
+npm install
+npm start
 ```
+
+### Environment Variables
+API keys are configured in `webapp-v4.js` config section:
+- `SERP_API_KEY`
+- `APOLLO_API_KEY`
+- `FIRMABLE_API_KEY`
+- `LUSHA_API_KEY`
+
+### Slack Setup
+1. Create Slack app at https://api.slack.com/apps
+2. Add slash commands pointing to your server
+3. Install to workspace
 
 ---
 
 ## Files
 
 ```
-webapp-v4.js    Main application (3200+ lines)
+webapp-v4.js    Main application (3400+ lines)
 watchlist.js    Job change tracking module
 stats.js        Usage statistics module
-package.json    Dependencies and scripts
+package.json    Dependencies
+README.md       This file
 ```
+
+---
+
+## Tech Stack
+
+- **Runtime:** Node.js 18+
+- **Server:** Native HTTP (no Express)
+- **APIs:** REST with JSON
+- **Frontend:** Embedded HTML/CSS/JS
+- **Storage:** JSON files (stats, watchlist)
 
 ---
 
