@@ -64,6 +64,41 @@ function curlPost(reqUrl, headers = {}, body = {}) {
 // 6. COLLEAGUES - Find specific roles at a company (NEW)
 // ============================================================================
 
+
+// Safe JSON parse - returns empty object on failure
+function safeJsonParse(str, fallback = {}) {
+  try {
+    return JSON.parse(str || '{}');
+  } catch (e) {
+    console.error('JSON parse error:', e.message);
+    return fallback;
+  }
+}
+
+// Safe POST handler wrapper
+function handlePost(req, res, handler) {
+  let body = '';
+  req.on('data', c => body += c);
+  req.on('error', e => {
+    console.error('Request error:', e.message);
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Request error: ' + e.message }));
+  });
+  req.on('end', () => {
+    try {
+      const data = safeJsonParse(body);
+      handler(data, (status, result) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      });
+    } catch (e) {
+      console.error('Handler error:', e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Server error: ' + e.message }));
+    }
+  });
+}
+
 function findColleagues(companyDomain, filters = {}) {
   const start = Date.now();
   const { roles, seniority, department, limit = 10 } = filters;
@@ -2545,14 +2580,11 @@ const server = http.createServer((req, res) => {
 
   // API: Prospect
   if (parsed.pathname === '/api/prospect' && req.method === 'POST') {
-    let body = '';
-    req.on('data', c => body += c);
-    req.on('end', () => {
-      const filters = JSON.parse(body);
+    handlePost(req, res, (filters, send) => {
       console.log(`\x1b[36m🎯 Prospect: ${JSON.stringify(filters)}\x1b[0m`);
       stats.trackRequest('/api/prospect');
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(prospectPeople(filters)));
+      const results = prospectPeople(filters);
+      send(200, results);
     });
     return;
   }
@@ -2584,17 +2616,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+
   // API: Enrich Colleague (NEW)
   if (parsed.pathname === '/api/colleagues/enrich' && req.method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const colleague = JSON.parse(body);
-      console.log(`\x1b[36m👤 Enrich: ${colleague.firstName} ${colleague.lastName}\x1b[0m`);
-      const results = enrichColleague(colleague);
-      console.log(`\x1b[32m✅ Found ${results.emails?.length || 0} emails, ${results.phones?.length || 0} phones\x1b[0m`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(results));
+      try {
+        const colleague = safeJsonParse(body);
+        console.log(`\x1b[36m👤 Enrich: ${colleague.firstName} ${colleague.lastName}\x1b[0m`);
+        const results = enrichColleague(colleague);
+        console.log(`\x1b[32m✅ Found ${results.emails?.length || 0} emails, ${results.phones?.length || 0} phones\x1b[0m`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(results));
+      } catch (e) {
+        console.error('Enrich error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message, emails: [], phones: [] }));
+      }
     });
     return;
   }
@@ -2729,14 +2768,20 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const { csv } = JSON.parse(body);
-      const parsed = parseCSV(csv);
-      if (parsed.error) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: parsed.error })); return; }
-      if (parsed.contacts.length > 100) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Max 100 contacts' })); return; }
-      const compliance = checkCompliance(parsed.contacts);
-      console.log(`\x1b[36m📋 Validate: ${compliance.validContacts.length} valid, ${compliance.issues.length} issues\x1b[0m`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(compliance));
+      try {
+        const { csv } = safeJsonParse(body);
+        const parsed = parseCSV(csv);
+        if (parsed.error) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: parsed.error })); return; }
+        if (parsed.contacts.length > 100) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Max 100 contacts' })); return; }
+        const compliance = checkCompliance(parsed.contacts);
+        console.log(`\x1b[36m📋 Validate: ${compliance.validContacts.length} valid, ${compliance.issues.length} issues\x1b[0m`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(compliance));
+      } catch (e) {
+        console.error('Bulk validate error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
@@ -2745,13 +2790,20 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', async () => {
-      const { contacts } = JSON.parse(body);
-      console.log(`\x1b[36m📋 Enrich: ${contacts.length} contacts\x1b[0m`);
-      stats.trackRequest('/api/bulk/enrich');
-      const results = await enrichContactsBulk(contacts);
-      console.log(`\x1b[32m✅ Enriched ${results.length} contacts\x1b[0m`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ results }));
+      try {
+        const { contacts } = safeJsonParse(body);
+        console.log(`\x1b[36m📋 Enrich: ${contacts?.length || 0} contacts\x1b[0m`);
+        stats.trackRequest('/api/bulk/enrich');
+        const results = await enrichContactsBulk(contacts || []);
+        results.forEach(r => stats.trackEnrichment(r));
+        console.log(`\x1b[32m✅ Enriched ${results.length} contacts\x1b[0m`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ enriched: results }));
+      } catch (e) {
+        console.error('Bulk enrich error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message, enriched: [] }));
+      }
     });
     return;
   }
@@ -2760,9 +2812,15 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const { results } = JSON.parse(body);
-      res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="enriched.csv"' });
-      res.end(generateCSV(results));
+      try {
+        const { results } = safeJsonParse(body);
+        res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="enriched.csv"' });
+        res.end(generateCSV(results || []));
+      } catch (e) {
+        console.error('Bulk download error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
@@ -2772,15 +2830,21 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const { data, type } = JSON.parse(body);
-      console.log(`\x1b[36m📤 Export HubSpot: ${type}\x1b[0m`);
-      const contacts = normalizeForExport(data, type);
-      const csv = generateHubSpotCSV(contacts);
-      res.writeHead(200, { 
-        'Content-Type': 'text/csv', 
-        'Content-Disposition': 'attachment; filename="hubspot_import.csv"' 
-      });
-      res.end(csv);
+      try {
+        const { data, type } = safeJsonParse(body);
+        console.log(`\x1b[36m📤 Export HubSpot: ${type}\x1b[0m`);
+        const contacts = normalizeForExport(data, type);
+        const csv = generateHubSpotCSV(contacts);
+        res.writeHead(200, { 
+          'Content-Type': 'text/csv', 
+          'Content-Disposition': 'attachment; filename="hubspot_import.csv"' 
+        });
+        res.end(csv);
+      } catch (e) {
+        console.error('HubSpot export error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
@@ -2790,21 +2854,26 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const { data, type } = JSON.parse(body);
-      console.log(`\x1b[36m📤 Export Salesforce: ${type}\x1b[0m`);
-      const contacts = normalizeForExport(data, type);
-      const csv = generateSalesforceCSV(contacts);
-      res.writeHead(200, { 
-        'Content-Type': 'text/csv', 
-        'Content-Disposition': 'attachment; filename="salesforce_leads.csv"' 
-      });
-      res.end(csv);
+      try {
+        const { data, type } = safeJsonParse(body);
+        console.log(`\x1b[36m📤 Export Salesforce: ${type}\x1b[0m`);
+        const contacts = normalizeForExport(data, type);
+        const csv = generateSalesforceCSV(contacts);
+        res.writeHead(200, { 
+          'Content-Type': 'text/csv', 
+          'Content-Disposition': 'attachment; filename="salesforce_leads.csv"' 
+        });
+        res.end(csv);
+      } catch (e) {
+        console.error('Salesforce export error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
 
-
-  // Slack endpoints
+  // Slack: /colleagues endpoint
   if (parsed.pathname === '/slack/colleagues' && req.method === 'POST') {
     let body = '';
     req.on('data', c => body += c);
@@ -2817,27 +2886,34 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ response_type: 'in_channel', text: `👥 Searching for colleagues at ${text}...` }));
       
       setImmediate(() => {
-        const parts = text.split(/\s+/);
-        const domain = parts[0];
-        const roles = parts.slice(1).filter(p => !['at', 'in', '@'].includes(p.toLowerCase()));
-        
-        const results = findColleagues(domain, { roles, limit: 10 });
-        
-        let msg = `👥 *${results.company?.name || domain}*\n`;
-        if (results.company?.employees) msg += `${results.company.employees} AU employees\n`;
-        msg += `\nFound *${results.total}* colleagues:\n`;
-        
-        results.colleagues.slice(0, 8).forEach(c => {
-          msg += `• *${c.name}* - ${c.title || 'Unknown'}`;
-          if (c.linkedin) msg += ` <${c.linkedin}|LinkedIn>`;
-          msg += '\n';
-        });
-        
-        if (results.total > 8) msg += `_...and ${results.total - 8} more_\n`;
-        msg += `\n_${results.duration}ms | FREE - no credits_`;
-        
-        if (response_url) {
-          curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+        try {
+          const parts = (text || '').split(/\s+/);
+          const domain = parts[0];
+          const roles = parts.slice(1).filter(p => !['at', 'in', '@'].includes(p.toLowerCase()));
+          
+          const results = findColleagues(domain, { roles, limit: 10 });
+          
+          let msg = `👥 *${results.company?.name || domain}*\n`;
+          if (results.company?.employees) msg += `${results.company.employees} AU employees\n`;
+          msg += `\nFound *${results.total}* colleagues:\n`;
+          
+          (results.colleagues || []).slice(0, 8).forEach(c => {
+            msg += `• *${c.name}* - ${c.title || 'Unknown'}`;
+            if (c.linkedin) msg += ` <${c.linkedin}|LinkedIn>`;
+            msg += '\n';
+          });
+          
+          if (results.total > 8) msg += `_...and ${results.total - 8} more_\n`;
+          msg += `\n_${results.duration}ms | FREE - no credits_`;
+          
+          if (response_url) {
+            curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+          }
+        } catch (e) {
+          console.error('Slack colleagues error:', e.message);
+          if (response_url) {
+            curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'ephemeral', text: `Error: ${e.message}` });
+          }
         }
       });
     });
@@ -3241,7 +3317,7 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const contact = JSON.parse(body);
+      const contact = safeJsonParse(body);
       console.log(`\x1b[36m👁️ Watchlist add: ${contact.firstName} ${contact.lastName}\x1b[0m`);
       const result = watchlist.addToWatchlist(contact);
       res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
