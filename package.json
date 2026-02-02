@@ -1,20 +1,9 @@
 {
   "name": "contact-discovery-bot",
-  "version": "5.0.0",
-  "description": "Multi-source contact discovery with bulk upload and compliance workflow",
-  "main": "webapp-v3.js",
+  "version": "6.0.0",
+  "main": "webapp-v4.js",
   "scripts": {
-    "start": "node webapp-v3.js",
-    "v4": "node webapp-v2.js",
-    "test": "node test.js"
+    "start": "node webapp-v4.js"
   },
-  "dependencies": {
-    "axios": "^1.6.0",
-    "dotenv": "^16.3.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "author": "Attalis Capital",
-  "license": "MIT"
+  "engines": { "node": ">=18.0.0" }
 }
