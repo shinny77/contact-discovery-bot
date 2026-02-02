@@ -2562,13 +2562,24 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      const { domain, roles, seniority, department, limit } = JSON.parse(body);
-      console.log(`\x1b[36m👥 Colleagues: ${domain} [${roles?.join(', ') || 'all'}]\x1b[0m`);
-      stats.trackRequest('/api/colleagues');
-      const results = findColleagues(domain, { roles, seniority, department, limit });
-      console.log(`\x1b[32m✅ Found ${results.colleagues.length} colleagues (${results.duration}ms)\x1b[0m`);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(results));
+      try {
+        const { domain, roles, seniority, department, limit } = JSON.parse(body || '{}');
+        if (!domain) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Domain required' }));
+          return;
+        }
+        console.log(`\x1b[36m👥 Colleagues: ${domain} [${roles?.join(', ') || 'all'}]\x1b[0m`);
+        stats.trackRequest('/api/colleagues');
+        const results = findColleagues(domain, { roles, seniority, department, limit });
+        console.log(`\x1b[32m✅ Found ${results.colleagues?.length || 0} colleagues (${results.duration}ms)\x1b[0m`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(results));
+      } catch (e) {
+        console.error('Colleagues error:', e.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
     });
     return;
   }
@@ -2591,22 +2602,35 @@ const server = http.createServer((req, res) => {
   // API: Company
   if (parsed.pathname === '/api/company') {
     const { domain } = parsed.query;
-    if (!domain) { res.writeHead(400); res.end(JSON.stringify({ error: 'Domain required' })); return; }
-    console.log(`\x1b[36m🏢 Company: ${domain}\x1b[0m`);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(getCompanyIntel(domain)));
+    if (!domain) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Domain required' })); return; }
+    try {
+      console.log(`\x1b[36m🏢 Company: ${domain}\x1b[0m`);
+      const results = getCompanyIntel(domain);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(results));
+    } catch (e) {
+      console.error('Company error:', e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message, company: null }));
+    }
     return;
   }
 
   // API: ABN Lookup
   if (parsed.pathname === '/api/abn') {
     const { q } = parsed.query;
-    if (!q) { res.writeHead(400); res.end(JSON.stringify({ error: 'Query (q) required - ABN number or company name' })); return; }
-    console.log(`\x1b[36m🔢 ABN: ${q}\x1b[0m`);
-    const results = lookupABN(q);
-    console.log(`\x1b[32m✅ Found ${results.matches.length} ABN matches (${results.duration}ms)\x1b[0m`);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(results));
+    if (!q) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Query (q) required' })); return; }
+    try {
+      console.log(`\x1b[36m🔢 ABN: ${q}\x1b[0m`);
+      const results = lookupABN(q);
+      console.log(`\x1b[32m✅ Found ${results.matches?.length || 0} ABN matches (${results.duration}ms)\x1b[0m`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(results));
+    } catch (e) {
+      console.error('ABN error:', e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message, matches: [] }));
+    }
     return;
   }
 
@@ -2623,14 +2647,21 @@ const server = http.createServer((req, res) => {
   // API: Hiring Signals
   if (parsed.pathname === '/api/hiring') {
     const { company } = parsed.query;
-    if (!company) { res.writeHead(400); res.end(JSON.stringify({ error: 'Company name or domain required' })); return; }
-    console.log(`\x1b[36m💼 Hiring: ${company}\x1b[0m`);
-    const results = getHiringSignals(company);
-    console.log(`\x1b[32m✅ Found ${results.jobCount || 0} jobs, ${results.careerPages.length} sources (${results.duration}ms)\x1b[0m`);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(results));
+    if (!company) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Company name or domain required' })); return; }
+    try {
+      console.log(`\x1b[36m💼 Hiring: ${company}\x1b[0m`);
+      const results = getHiringSignals(company);
+      console.log(`\x1b[32m✅ Found ${results.jobCount || 0} jobs, ${results.careerPages?.length || 0} sources (${results.duration}ms)\x1b[0m`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(results));
+    } catch (e) {
+      console.error('Hiring error:', e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message, jobCount: 0, careerPages: [] }));
+    }
     return;
   }
+
 
 
   // API: Tech Stack Lookup
@@ -3299,6 +3330,16 @@ const server = http.createServer((req, res) => {
 
   res.writeHead(404);
   res.end('Not Found');
+});
+
+
+// Global error handlers to prevent server crashes
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection:', reason);
 });
 
 server.listen(PORT, () => {
