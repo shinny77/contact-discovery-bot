@@ -338,7 +338,7 @@ function discoverPerson(firstName, lastName, company, domain, linkedinUrl) {
 
   try {
     const apolloData = curlPost('https://api.apollo.io/v1/people/match', { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
-      { first_name: firstName, last_name: lastName, organization_name: company, domain, reveal_personal_emails: true, reveal_phone_number: true });
+      { first_name: firstName, last_name: lastName, organization_name: company, domain, reveal_personal_emails: true });
     if (apolloData.person) {
       if (apolloData.person.email) results.emails.push({ email: apolloData.person.email, source: 'Apollo', verified: apolloData.person.email_status === 'verified' });
       if (apolloData.person.personal_emails?.length) apolloData.person.personal_emails.forEach(e => results.emails.push({ email: e, source: 'Apollo', type: 'personal' }));
@@ -951,7 +951,7 @@ function enrichLinkedIn(linkedinUrl) {
 
   try {
     const apolloData = curlPost('https://api.apollo.io/v1/people/match', { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
-      { linkedin_url: liUrl, reveal_personal_emails: true, reveal_phone_number: true });
+      { linkedin_url: liUrl, reveal_personal_emails: true });
     if (apolloData.person) {
       if (!results.person) results.person = { firstName: apolloData.person.first_name, lastName: apolloData.person.last_name, title: apolloData.person.title };
       if (apolloData.person.email && !results.emails.find(e => e.email === apolloData.person.email)) results.emails.push({ email: apolloData.person.email, source: 'Apollo', verified: apolloData.person.email_status === 'verified' });
@@ -1015,7 +1015,7 @@ async function enrichContactsBulk(contacts) {
     const enriched = { ...c, _enriched: true, _timestamp: new Date().toISOString(), emails: [], phones: [], sources: [] };
     try {
       const apolloData = curlPost('https://api.apollo.io/v1/people/match', { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
-        { first_name: c.firstName, last_name: c.lastName, organization_name: c.company, domain: c.domain, reveal_personal_emails: true, reveal_phone_number: true });
+        { first_name: c.firstName, last_name: c.lastName, organization_name: c.company, domain: c.domain, reveal_personal_emails: true });
       if (apolloData.person) {
         if (apolloData.person.email) enriched.emails.push({ email: apolloData.person.email, source: 'Apollo', verified: apolloData.person.email_status === 'verified' });
         if (apolloData.person.personal_emails?.length) apolloData.person.personal_emails.forEach(e => enriched.emails.push({ email: e, source: 'Apollo', type: 'personal' }));
@@ -2568,14 +2568,24 @@ const server = http.createServer((req, res) => {
   // API: Discover
   if (parsed.pathname === '/api/discover') {
     const { firstName, lastName, company, domain, linkedin } = parsed.query;
-    if (!firstName || !lastName) { res.writeHead(400); res.end(JSON.stringify({ error: 'Name required' })); return; }
-    console.log(`\x1b[36m🔍 Discover: ${firstName} ${lastName}\x1b[0m`);
-    console.log(`\x1b[36m🔍 Discover: ${firstName} ${lastName}\x1b[0m`);
-    stats.trackRequest('/api/discover');
-    const result = discoverPerson(firstName, lastName, company || '', domain || '', linkedin || '');
-    stats.trackEnrichment(result);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(result));
+    if (!firstName || !lastName) { 
+      res.writeHead(400, { 'Content-Type': 'application/json' }); 
+      res.end(JSON.stringify({ error: 'Name required' })); 
+      return; 
+    }
+    try {
+      console.log(`\x1b[36m🔍 Discover: ${firstName} ${lastName}\x1b[0m`);
+      stats.trackRequest('/api/discover');
+      const result = discoverPerson(firstName, lastName, company || '', domain || '', linkedin || '');
+      stats.trackEnrichment(result);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (e) {
+      console.error('Discover error:', e.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message, emails: [], phones: [] }));
+    }
+    return;
   }
 
   // API: Prospect
