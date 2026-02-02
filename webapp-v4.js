@@ -16,6 +16,7 @@
 const http = require('http');
 const { execSync } = require('child_process');
 const watchlist = require('./watchlist.js');
+const stats = require('./stats.js');
 const url = require('url');
 const querystring = require('querystring');
 const crypto = require('crypto');
@@ -1291,6 +1292,7 @@ const HTML = `<!DOCTYPE html>
       <div class="tab" data-tab="hiring">💼 Hiring</div>
       <div class="tab" data-tab="tech">🔧 Tech Stack</div>
       <div class="tab" data-tab="lookalike">🔄 Lookalikes</div>
+      <div class="tab" data-tab="dashboard">📊 Dashboard</div>
       <div class="tab" data-tab="linkedin">🔗 LinkedIn</div>
       <div class="tab" data-tab="bulk">📋 Bulk</div>
       <div class="tab new" data-tab="watchlist">👁️ Watchlist</div>
@@ -1541,6 +1543,19 @@ const HTML = `<!DOCTYPE html>
     </div>
     
     <!-- Bulk Panel -->
+    
+    <!-- Dashboard Panel -->
+    <div class="panel" id="panel-dashboard">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h3 style="color:#4ecdc4">📊 Usage Dashboard</h3>
+        <button class="btn btn-sm btn-secondary" onclick="loadDashboard()">🔄 Refresh</button>
+      </div>
+      
+      <div id="dashboard-content">
+        <p style="color:#8892b0;text-align:center;padding:30px">Loading stats...</p>
+      </div>
+    </div>
+    
     <div class="panel" id="panel-bulk">
       <div class="step-indicator"><div class="step-dot active" id="dot-1"></div><div class="step-dot" id="dot-2"></div><div class="step-dot" id="dot-3"></div><div class="step-dot" id="dot-4"></div></div>
       <div class="step active" id="step-1">
@@ -2259,6 +2274,97 @@ const HTML = `<!DOCTYPE html>
     
     document.getElementById('look-seed')?.addEventListener('keypress', e => { if (e.key === 'Enter') findLookalikes(); });
 
+    // ============ DASHBOARD ============
+    async function loadDashboard() {
+      const content = document.getElementById('dashboard-content');
+      content.innerHTML = '<p style="color:#8892b0;text-align:center;padding:30px"><div class="spinner"></div>Loading...</p>';
+      
+      try {
+        const resp = await fetch('/api/stats');
+        const data = await resp.json();
+        
+        let h = '';
+        
+        // Summary cards
+        h += '<div class="result-grid" style="margin-bottom:25px">';
+        h += '<div class="result-item" style="text-align:center"><div class="label">Total Requests</div><div class="value" style="font-size:2em;color:#4ecdc4">' + (data.totalRequests || 0).toLocaleString() + '</div></div>';
+        h += '<div class="result-item" style="text-align:center"><div class="label">Contacts Enriched</div><div class="value" style="font-size:2em;color:#28a745">' + (data.enrichmentStats?.total || 0).toLocaleString() + '</div></div>';
+        h += '<div class="result-item" style="text-align:center"><div class="label">Email Success</div><div class="value" style="font-size:2em;color:#ffc107">' + (data.derived?.emailSuccessRate || 0) + '%</div></div>';
+        h += '<div class="result-item" style="text-align:center"><div class="label">Uptime</div><div class="value" style="font-size:1.5em">' + (data.derived?.uptime || 'N/A') + '</div></div>';
+        h += '</div>';
+        
+        // Enrichment breakdown
+        h += '<div class="result-card" style="margin-bottom:20px">';
+        h += '<h4 style="color:#8892b0;margin-bottom:15px">📧 Enrichment Success Rates</h4>';
+        h += '<div class="result-grid">';
+        const es = data.enrichmentStats || {};
+        const total = es.total || 1;
+        h += '<div class="result-item"><div class="label">With Email</div><div class="value">' + (es.withEmail || 0) + ' (' + Math.round((es.withEmail || 0) / total * 100) + '%)</div></div>';
+        h += '<div class="result-item"><div class="label">With Phone</div><div class="value">' + (es.withPhone || 0) + ' (' + Math.round((es.withPhone || 0) / total * 100) + '%)</div></div>';
+        h += '<div class="result-item"><div class="label">With LinkedIn</div><div class="value">' + (es.withLinkedIn || 0) + ' (' + Math.round((es.withLinkedIn || 0) / total * 100) + '%)</div></div>';
+        h += '</div></div>';
+        
+        // Last 7 days chart (simple bar)
+        if (data.derived?.last7Days?.length) {
+          h += '<div class="result-card" style="margin-bottom:20px">';
+          h += '<h4 style="color:#8892b0;margin-bottom:15px">📈 Last 7 Days</h4>';
+          h += '<div style="display:flex;align-items:flex-end;gap:8px;height:100px">';
+          const max = Math.max(...data.derived.last7Days.map(d => d.requests), 1);
+          data.derived.last7Days.forEach(d => {
+            const height = Math.max(5, (d.requests / max) * 80);
+            const day = new Date(d.date).toLocaleDateString('en-AU', { weekday: 'short' });
+            h += '<div style="flex:1;text-align:center">';
+            h += '<div style="background:linear-gradient(180deg,#4ecdc4,#44a08d);height:' + height + 'px;border-radius:4px 4px 0 0;margin-bottom:4px"></div>';
+            h += '<div style="font-size:0.7em;color:#8892b0">' + day + '</div>';
+            h += '<div style="font-size:0.75em">' + d.requests + '</div>';
+            h += '</div>';
+          });
+          h += '</div></div>';
+        }
+        
+        // Top endpoints
+        if (data.derived?.topEndpoints?.length) {
+          h += '<div class="result-card" style="margin-bottom:20px">';
+          h += '<h4 style="color:#8892b0;margin-bottom:15px">🔝 Top Endpoints</h4>';
+          data.derived.topEndpoints.slice(0, 8).forEach(e => {
+            const pct = Math.round((e.count / data.totalRequests) * 100);
+            h += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)">';
+            h += '<span style="font-family:monospace;font-size:0.85em">' + esc(e.endpoint) + '</span>';
+            h += '<span>' + e.count + ' <span style="color:#8892b0">(' + pct + '%)</span></span>';
+            h += '</div>';
+          });
+          h += '</div>';
+        }
+        
+        // API health
+        h += '<div class="result-card">';
+        h += '<h4 style="color:#8892b0;margin-bottom:15px">🔌 API Health</h4>';
+        h += '<div class="result-grid">';
+        Object.entries(data.apiCalls || {}).forEach(([api, info]) => {
+          const errorRate = info.calls > 0 ? Math.round((info.errors / info.calls) * 100) : 0;
+          const color = errorRate > 20 ? '#dc3545' : errorRate > 5 ? '#ffc107' : '#28a745';
+          h += '<div class="result-item">';
+          h += '<div class="label">' + api.toUpperCase() + '</div>';
+          h += '<div class="value">' + info.calls + ' calls <span style="color:' + color + '">(' + errorRate + '% errors)</span></div>';
+          h += '</div>';
+        });
+        h += '</div></div>';
+        
+        // Footer
+        h += '<p style="text-align:center;color:#5a6a8a;margin-top:20px;font-size:0.8em">';
+        h += 'Started: ' + new Date(data.startedAt).toLocaleString() + ' | Last updated: ' + new Date(data.lastUpdated).toLocaleString();
+        h += '</p>';
+        
+        content.innerHTML = h;
+      } catch (e) {
+        content.innerHTML = '<p style="color:#dc3545;text-align:center;padding:30px">Error loading stats: ' + e.message + '</p>';
+      }
+    }
+    
+    // Load dashboard when tab is clicked
+    document.querySelector('[data-tab="dashboard"]')?.addEventListener('click', loadDashboard);
+
+
     // ============ WATCHLIST ============
     async function loadWatchlist() {
       try {
@@ -2392,6 +2498,23 @@ const server = http.createServer((req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
   if (parsed.pathname === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ status: 'ok', version: '6.0.0' })); return; }
+
+  // API: Dashboard Stats
+  if (parsed.pathname === '/api/stats') {
+    const data = stats.getStats();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+    return;
+  }
+
+  // API: Reset Stats (admin)
+  if (parsed.pathname === '/api/stats/reset' && req.method === 'POST') {
+    const data = stats.resetStats();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, stats: data }));
+    return;
+  }
+
   if (parsed.pathname === '/' || parsed.pathname === '/index.html') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(HTML); return; }
 
   // API: Discover
@@ -2399,9 +2522,12 @@ const server = http.createServer((req, res) => {
     const { firstName, lastName, company, domain, linkedin } = parsed.query;
     if (!firstName || !lastName) { res.writeHead(400); res.end(JSON.stringify({ error: 'Name required' })); return; }
     console.log(`\x1b[36m🔍 Discover: ${firstName} ${lastName}\x1b[0m`);
+    console.log(`\x1b[36m🔍 Discover: ${firstName} ${lastName}\x1b[0m`);
+    stats.trackRequest('/api/discover');
+    const result = discoverPerson(firstName, lastName, company || '', domain || '', linkedin || '');
+    stats.trackEnrichment(result);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(discoverPerson(firstName, lastName, company || '', domain || '', linkedin || '')));
-    return;
+    res.end(JSON.stringify(result));
   }
 
   // API: Prospect
@@ -2411,6 +2537,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       const filters = JSON.parse(body);
       console.log(`\x1b[36m🎯 Prospect: ${JSON.stringify(filters)}\x1b[0m`);
+      stats.trackRequest('/api/prospect');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(prospectPeople(filters)));
     });
@@ -2424,6 +2551,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       const { domain, roles, seniority, department, limit } = JSON.parse(body);
       console.log(`\x1b[36m👥 Colleagues: ${domain} [${roles?.join(', ') || 'all'}]\x1b[0m`);
+      stats.trackRequest('/api/colleagues');
       const results = findColleagues(domain, { roles, seniority, department, limit });
       console.log(`\x1b[32m✅ Found ${results.colleagues.length} colleagues (${results.duration}ms)\x1b[0m`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2575,6 +2703,7 @@ const server = http.createServer((req, res) => {
     req.on('end', async () => {
       const { contacts } = JSON.parse(body);
       console.log(`\x1b[36m📋 Enrich: ${contacts.length} contacts\x1b[0m`);
+      stats.trackRequest('/api/bulk/enrich');
       const results = await enrichContactsBulk(contacts);
       console.log(`\x1b[32m✅ Enriched ${results.length} contacts\x1b[0m`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
