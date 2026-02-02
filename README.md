@@ -1,22 +1,16 @@
-# Contact Discovery Bot v4
+# Contact Discovery Bot v5
 
-Multi-source contact discovery for AU/NZ business contacts with 4 powerful features.
+Multi-source contact discovery for AU/NZ business contacts with **bulk upload** and **compliance workflow**.
 
 ## Features
 
-| Feature | Description | Slack Command |
-|---------|-------------|---------------|
-| **Discover** | Find emails, phones, LinkedIn for a person | `/discover Tom Cowan, TDM Growth Partners` |
-| **Prospect** | Search for new leads by criteria (FREE) | `/prospect CEO Sydney fintech 10` |
-| **Company** | Full company intelligence profile | `/company atlassian.com` |
-| **LinkedIn** | Enrich contact from LinkedIn URL | `/linkedin linkedin.com/in/tom-cowan` |
-
-## Data Sources
-
-- **SerpAPI** - LinkedIn profile discovery via Google
-- **Apollo.io** - Email enrichment, people search (FREE)
-- **Firmable** - AU/NZ company data, ABN/ACN, mobiles
-- **Lusha** - Global contact enrichment, verified emails
+| Feature | Description | Endpoint |
+|---------|-------------|----------|
+| **Discover** | Find contact info for a person | `/api/discover` |
+| **Prospect** | Search for leads by criteria (FREE) | `/api/prospect` |
+| **Company** | Full company intelligence | `/api/company` |
+| **LinkedIn** | Enrich from LinkedIn URL | `/api/linkedin` |
+| **📋 Bulk Upload** | CSV upload with compliance checks | `/api/bulk/*` |
 
 ## Quick Start
 
@@ -27,106 +21,209 @@ npm start
 
 Open http://localhost:3000
 
-## Slack Setup
+---
 
-### 1. Create Slack App
-Go to [api.slack.com/apps](https://api.slack.com/apps) → Create New App
+## 📋 Bulk Upload
 
-### 2. Add Slash Commands
+### CSV File Requirements
 
-| Command | Request URL | Description |
-|---------|-------------|-------------|
-| `/discover` | `https://your-server/slack/discover` | Find person's contact info |
-| `/prospect` | `https://your-server/slack/prospect` | Search for new leads |
-| `/company` | `https://your-server/slack/company` | Get company intelligence |
-| `/linkedin` | `https://your-server/slack/linkedin` | Enrich from LinkedIn URL |
+**Required columns:**
+- `firstName` - Person's first name
+- `lastName` - Person's last name
 
-### 3. Install & Configure
+**Recommended columns:**
+- `company` - Company name
+- `domain` - Company domain (e.g., atlassian.com)
+- `linkedin` - LinkedIn profile URL
+
+**Optional columns:**
+- `email` - Existing email (will be preserved)
+- `phone` - Existing phone
+- `title` - Job title
+- `location` - City/region
+
+**Compliance columns:**
+- `doNotContact` - Set to "true" to skip this contact
+- `optedOut` - Set to "true" if previously opted out
+
+### Column Name Flexibility
+
+The system accepts various column name formats:
+- `firstName`, `first_name`, `First Name`, `given name`
+- `lastName`, `last_name`, `Last Name`, `surname`
+- `company`, `Company Name`, `organisation`, `employer`
+- etc.
+
+### Example CSV
+
+```csv
+firstName,lastName,company,domain,linkedin,title
+John,Smith,Acme Corp,acme.com,https://linkedin.com/in/johnsmith,CEO
+Jane,Doe,Tech Startup,techstartup.io,,CTO
+Tom,Cowan,TDM Growth Partners,tdmgrowthpartners.com,,Managing Director
+```
+
+### Limits
+
+- Maximum **100 contacts** per batch
+- Rate limited to ~5 contacts/second
+
+---
+
+## Compliance Workflow
+
+The bulk upload feature includes a **4-step compliance workflow**:
+
+### Step 1: Upload CSV
+- Drag & drop or browse for CSV file
+- System detects columns and maps to standard fields
+- Download template if needed
+
+### Step 2: Compliance Validation
+- **Data quality checks**: Valid email format, LinkedIn URL format
+- **Required fields**: First name, last name, plus company/domain/LinkedIn
+- **Duplicate detection**: Flags same name + company
+- **Opt-out flags**: Respects doNotContact and optedOut columns
+- Review and acknowledge compliance requirements
+
+### Step 3: Enrichment
+- Contacts enriched via Apollo, Firmable, Lusha
+- Progress bar shows real-time status
+- ~200ms delay between requests (rate limiting)
+
+### Step 4: Download Results
+- Download enriched CSV with all contact data
+- **DNC Warning**: Australian phone numbers flagged for Do Not Call verification
+- Columns include: emails, phones, LinkedIn, company ABN, sources, timestamps
+
+---
+
+## Output CSV Format
+
+The enriched CSV includes:
+
+| Column | Description |
+|--------|-------------|
+| `firstName`, `lastName` | Original input |
+| `company`, `title`, `domain` | Enriched/original |
+| `email_1`, `email_1_type`, `email_1_source`, `email_1_verified` | Primary email |
+| `email_2`, `email_2_type`, `email_2_source` | Secondary email |
+| `phone_1`, `phone_1_type`, `phone_1_source`, `phone_1_dnc_note` | Primary phone |
+| `phone_2`, `phone_2_type`, `phone_2_source` | Secondary phone |
+| `linkedin` | LinkedIn URL |
+| `company_abn`, `company_au_employees`, `company_phone` | Company data |
+| `sources` | Data sources used |
+| `enriched_at` | Timestamp |
+| `errors` | Any errors encountered |
+
+---
+
+## Australian Compliance Notes
+
+### Do Not Call Register
+
+Australian mobile numbers (+61 4xx) are flagged with a note:
+> "Verify against ACMA Do Not Call Register before calling"
+
+Before calling any Australian numbers:
+1. Check https://www.donotcall.gov.au/
+2. Register as a caller if not already
+3. Wash your list against the DNC register
+
+### Privacy Act
+
+Ensure you have a lawful basis for processing under the Australian Privacy Act:
+- Existing business relationship
+- Legitimate interest for B2B prospecting
+- Consent for marketing communications
+
+---
+
+## API Reference
+
+### Bulk Validate
 ```bash
-# Add to .env
-SLACK_SIGNING_SECRET=your-signing-secret
+POST /api/bulk/validate
+Content-Type: application/json
+
+{
+  "csv": "firstName,lastName,company\nJohn,Smith,Acme"
+}
+
+# Response
+{
+  "validContacts": [...],
+  "issues": [{"row": 2, "contact": "Jane Doe", "issues": ["Missing company"]}],
+  "totalRows": 10
+}
 ```
 
-## Usage Examples
-
-### Slack
-```
-/discover Tom Cowan, TDM Growth Partners
-/discover Myles Glashier @ Phocas Software
-/prospect CEO Sydney 10
-/prospect CFO, Director Melbourne fintech
-/company atlassian.com
-/company TDM Growth Partners
-/linkedin https://linkedin.com/in/tom-cowan
-```
-
-### API
+### Bulk Enrich
 ```bash
-# Discover person
-curl "http://localhost:3000/api/discover?firstName=Tom&lastName=Cowan&company=TDM"
+POST /api/bulk/enrich
+Content-Type: application/json
 
-# Prospect (POST)
-curl -X POST http://localhost:3000/api/prospect \
-  -H "Content-Type: application/json" \
-  -d '{"titles":["CEO","CFO"],"locations":["Sydney"],"limit":10}'
+{
+  "contacts": [
+    {"firstName": "John", "lastName": "Smith", "company": "Acme"}
+  ]
+}
 
-# Company intel
-curl "http://localhost:3000/api/company?domain=atlassian.com"
-
-# LinkedIn enrichment
-curl "http://localhost:3000/api/linkedin?url=https://linkedin.com/in/tom-cowan"
+# Response
+{
+  "results": [
+    {
+      "firstName": "John",
+      "lastName": "Smith",
+      "emails": [{"email": "john@acme.com", "source": "Apollo"}],
+      "phones": [...],
+      "companyInfo": {...}
+    }
+  ]
+}
 ```
 
-## Response Example
+### Bulk Download
+```bash
+POST /api/bulk/download
+Content-Type: application/json
 
-### /discover
-```
-🔍 Tom Cowan @ TDM Growth Partners
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔗 LinkedIn: linkedin.com/in/tom-cowan-1627b410
-📧 tomc@tdmgrowth.com ✓ Apollo
-📱 +61 2 9000 0000 Firmable
+{
+  "results": [...]  // From enrich response
+}
 
-🏢 TDM Growth Partners • 19 AU employees
-
-7234ms
+# Response: CSV file download
 ```
 
-### /prospect (FREE - no credits)
-```
-🎯 Found 847 prospects
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• John Smith - CEO
-  Acme Corp (250 emp) LinkedIn
-• Jane Doe - Chief Executive Officer
-  Tech Startup (50 emp) LinkedIn
-...
+### Template Download
+```bash
+GET /api/bulk/template
+
+# Response: CSV template file
 ```
 
-### /company
-```
-🏢 Atlassian
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌐 atlassian.com
-👥 3,767 AU employees
-🌍 12,000 global employees
-📅 Founded 2002
-🔢 ABN: 53 102 443 916
+---
 
-💻 Tech: Jira, Confluence, AWS, React...
-💼 Hiring: 47 open positions
-```
+## Data Sources
+
+| Source | Coverage | Best For |
+|--------|----------|----------|
+| **Apollo.io** | Global | Emails, verified contacts |
+| **Firmable** | AU/NZ | ABN, AU employees, mobiles |
+| **Lusha** | Global | Verified emails, phones |
+| **SerpAPI** | Global | LinkedIn profile discovery |
+
+---
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SLACK_SIGNING_SECRET` | Slack app signing secret | - |
-| `SERP_API_KEY` | SerpAPI key | Provided |
-| `APOLLO_API_KEY` | Apollo.io API key | Provided |
-| `FIRMABLE_API_KEY` | Firmable API key | Provided |
-| `LUSHA_API_KEY` | Lusha API key | Provided |
-| `PORT` | Server port | 3000 |
+```env
+SERP_API_KEY=your-key
+APOLLO_API_KEY=your-key
+FIRMABLE_API_KEY=your-key
+LUSHA_API_KEY=your-key
+PORT=3000
+```
 
 ## License
 
