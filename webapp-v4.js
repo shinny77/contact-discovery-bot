@@ -326,6 +326,7 @@ function discoverPerson(firstName, lastName, company, domain, linkedinUrl) {
   const start = Date.now();
   const results = { firstName, lastName, company, linkedin: linkedinUrl || null, emails: [], phones: [], companyInfo: null, sources: {} };
 
+  // 1. Find LinkedIn URL if not provided (SerpAPI)
   if (!results.linkedin) {
     try {
       const query = `${firstName} ${lastName} ${company} site:linkedin.com`;
@@ -333,9 +334,10 @@ function discoverPerson(firstName, lastName, company, domain, linkedinUrl) {
       const li = serpData.organic_results?.find(r => r.link?.includes('linkedin.com/in/'));
       if (li) results.linkedin = li.link;
       results.sources.serp = { status: 'success' };
-    } catch (e) { results.sources.serp = { status: 'error' }; }
+    } catch (e) { results.sources.serp = { status: 'error', message: e.message }; }
   }
 
+  // 2. Apollo - Get work email
   try {
     const apolloData = curlPost('https://api.apollo.io/v1/people/match', { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
       { first_name: firstName, last_name: lastName, organization_name: company, domain, reveal_personal_emails: true });
@@ -346,23 +348,53 @@ function discoverPerson(firstName, lastName, company, domain, linkedinUrl) {
       if (!results.linkedin && apolloData.person.linkedin_url) results.linkedin = apolloData.person.linkedin_url;
     }
     results.sources.apollo = { status: 'success' };
-  } catch (e) { results.sources.apollo = { status: 'error' }; }
+  } catch (e) { results.sources.apollo = { status: 'error', message: e.message }; }
 
+  // 3. Lusha - Get emails and phones via LinkedIn URL
+  if (results.linkedin) {
+    try {
+      const lushaData = curlGet(`https://api.lusha.com/v2/person?linkedinUrl=${encodeURIComponent(results.linkedin)}&revealEmails=true&revealPhones=true`, { 'api_key': config.lusha.apiKey });
+      const d = lushaData.data || lushaData.contact?.data;
+      if (d) {
+        if (d.emailAddresses?.length) {
+          d.emailAddresses.forEach(e => {
+            if (!results.emails.find(x => x.email === e.email)) {
+              results.emails.push({ email: e.email, source: 'Lusha', type: e.emailType });
+            }
+          });
+        }
+        if (d.phoneNumbers?.length) {
+          d.phoneNumbers.forEach(p => {
+            const num = p.internationalNumber || p.localizedNumber;
+            if (num && !results.phones.find(x => x.number === num)) {
+              results.phones.push({ number: num, source: 'Lusha', type: p.type });
+            }
+          });
+        }
+      }
+      results.sources.lusha = { status: 'success' };
+    } catch (e) { results.sources.lusha = { status: 'error', message: e.message }; }
+  }
+
+  // 4. Firmable - Get company info and AU data
   try {
     let searchDomain = domain || (company ? company.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com.au' : null);
     if (searchDomain) {
       const firmData = curlGet(`https://api.firmable.com/company?website=${encodeURIComponent(searchDomain)}`, { 'Authorization': `Bearer ${config.firmable.apiKey}` });
       if (firmData.id) {
-        results.companyInfo = { name: firmData.name, employees: firmData.au_employee_count, abn: firmData.abn, phone: firmData.phone };
-        if (firmData.phone) results.phones.push({ number: firmData.phone, source: 'Firmable', type: 'company' });
+        results.companyInfo = { name: firmData.name, domain: firmData.fqdn, employees: firmData.au_employee_count, abn: firmData.abn, phone: firmData.phone };
+        if (firmData.phone && !results.phones.find(x => x.number === firmData.phone)) {
+          results.phones.push({ number: firmData.phone, source: 'Firmable', type: 'company' });
+        }
       }
     }
     results.sources.firmable = { status: 'success' };
-  } catch (e) { results.sources.firmable = { status: 'error' }; }
+  } catch (e) { results.sources.firmable = { status: 'error', message: e.message }; }
 
   results.duration = Date.now() - start;
   return results;
 }
+
 
 function prospectPeople(filters) {
   const start = Date.now();
