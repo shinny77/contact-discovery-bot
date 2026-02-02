@@ -2980,6 +2980,76 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+
+  // Slack: /cdhelp command (help/readme)
+  if ((parsed.pathname === '/slack/cdhelp' || parsed.pathname === '/slack/help') && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      console.log(`\x1b[35m📱 Slack /cdhelp\x1b[0m`);
+      
+      const helpText = `🔍 *Contact Discovery Bot - Command Reference*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+*PERSON LOOKUP*
+\`/discover Tom Cowan, TDM Growth Partners\`
+→ Find emails, phones, LinkedIn for a person
+
+*PROSPECTING* ✨ FREE
+\`/prospect CEO Sydney 10\`
+\`/prospect CFO, Director Melbourne fintech\`
+→ Find leads by title, location, industry
+
+*FIND COLLEAGUES* ✨ FREE
+\`/colleagues atlassian.com CFO\`
+\`/colleagues canva.com CEO CTO VP\`
+→ Find specific roles at any company
+
+*COMPANY INTEL*
+\`/company atlassian.com\`
+\`/company Canva\`
+→ Full company profile, employees, tech stack
+
+*LINKEDIN ENRICHMENT*
+\`/linkedin https://linkedin.com/in/username\`
+→ Get contact info from LinkedIn URL
+
+*ABN LOOKUP* ✨ FREE
+\`/abn Atlassian\`
+\`/abn 53 102 443 916\`
+→ Australian Business Number verification
+
+*HIRING SIGNALS* ✨ FREE
+\`/hiring canva.com\`
+→ Open jobs, growth indicators, career pages
+
+*TECH STACK*
+\`/tech atlassian.com\`
+→ See what technologies a company uses
+
+*LOOKALIKE COMPANIES* ✨ FREE
+\`/lookalike atlassian.com\`
+→ Find similar companies by industry & size
+
+*JOB CHANGE ALERTS*
+\`/watchlist\` → List watched contacts
+\`/watchlist add Tom Cowan TDM\` → Add to watchlist
+\`/watchlist check\` → Check for job changes
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✨ = FREE (no API credits used)
+📊 Web UI: Open the app for bulk upload, CRM export, and dashboard
+`;
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        response_type: 'ephemeral',  // Only visible to user who typed command
+        text: helpText 
+      }));
+    });
+    return;
+  }
+
   // Slack: /watchlist command
   if (parsed.pathname === '/slack/watchlist' && req.method === 'POST') {
     let body = '';
