@@ -15,6 +15,7 @@
 
 const http = require('http');
 const { execSync } = require('child_process');
+const watchlist = require('./watchlist.js');
 const url = require('url');
 const querystring = require('querystring');
 const crypto = require('crypto');
@@ -624,7 +625,7 @@ const HTML = `<!DOCTYPE html>
       <div class="tab" data-tab="company">🏢 Company</div>
       <div class="tab" data-tab="linkedin">🔗 LinkedIn</div>
       <div class="tab" data-tab="bulk">📋 Bulk</div>
-    </div>
+      <div class="tab new" data-tab="watchlist">👁️ Watchlist</div>
     
     <!-- Discover Panel -->
     <div class="panel active" id="panel-discover">
@@ -750,8 +751,42 @@ const HTML = `<!DOCTYPE html>
         <div id="bulk-results" style="margin-top:15px"></div>
       </div>
     </div>
+    </div>
+    
+    <!-- Watchlist Panel (NEW) -->
+    <div class="panel" id="panel-watchlist">
+      <div class="instructions">
+        <h4>👁️ Job Change Alerts</h4>
+        <p>Track contacts and get notified when they change roles or companies. Add contacts from other tabs or manually below.</p>
+      </div>
+      
+      <div class="form-row">
+        <div class="form-group"><label>First Name</label><input type="text" id="w-firstName" placeholder="Tom"></div>
+        <div class="form-group"><label>Last Name</label><input type="text" id="w-lastName" placeholder="Cowan"></div>
+        <div class="form-group"><label>Company</label><input type="text" id="w-company" placeholder="TDM Growth Partners"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Title</label><input type="text" id="w-title" placeholder="Managing Director"></div>
+        <div class="form-group" style="flex:2"><label>LinkedIn URL</label><input type="text" id="w-linkedin" placeholder="https://linkedin.com/in/..."></div>
+      </div>
+      <button class="btn" onclick="addToWatchlist()">➕ Add to Watchlist</button>
+      
+      <div style="margin-top:25px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.1)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
+          <h3 style="color:#4ecdc4">📋 Watched Contacts</h3>
+          <div style="display:flex;gap:10px">
+            <button class="btn btn-sm btn-secondary" onclick="loadWatchlist()">🔄 Refresh</button>
+            <button class="btn btn-sm" onclick="checkWatchlist()">🔍 Check for Changes</button>
+          </div>
+        </div>
+        
+        <div class="loading" id="w-loading"><div class="spinner"></div>Checking contacts...</div>
+        <div class="error" id="w-error"></div>
+        <div id="w-changes" style="margin-bottom:15px"></div>
+        <div id="w-list"></div>
+      </div>
+    </div>
   </div>
-  
   <script>
     // Tab switching
     document.querySelectorAll('.tab').forEach(tab => {
@@ -1034,6 +1069,123 @@ const HTML = `<!DOCTYPE html>
     
     function resetBulk() { bulkData = { csv: null, contacts: [], enriched: [] }; document.getElementById('file-info').style.display = 'none'; document.getElementById('btn-validate').style.display = 'none'; fileInput.value = ''; goToStep(1); }
     function goToStep(n) { document.querySelectorAll('.step').forEach(s => s.classList.remove('active')); document.getElementById('step-' + n).classList.add('active'); for (let i = 1; i <= 4; i++) { const d = document.getElementById('dot-' + i); d.classList.remove('active', 'completed'); if (i < n) d.classList.add('completed'); if (i === n) d.classList.add('active'); } }
+    
+    // ============ WATCHLIST ============
+    async function loadWatchlist() {
+      try {
+        const resp = await fetch('/api/watchlist');
+        const data = await resp.json();
+        renderWatchlist(data);
+      } catch (e) { showError('w-error', e.message); }
+    }
+    
+    function renderWatchlist(data) {
+      const list = document.getElementById('w-list');
+      if (!data.contacts?.length) {
+        list.innerHTML = '<p style="color:#5a6a8a;text-align:center;padding:30px">No contacts in watchlist. Add contacts to track job changes.</p>';
+        return;
+      }
+      
+      let h = '<div class="result-grid">';
+      data.contacts.forEach(c => {
+        const hasChanges = c.changeHistory?.length > 0;
+        h += '<div class="colleague-card' + (hasChanges ? ' style="border-color:#ffc107"' : '') + '">';
+        h += '<div class="colleague-name">' + esc(c.firstName + ' ' + c.lastName) + '</div>';
+        h += '<div class="colleague-title">' + esc(c.lastTitle || 'Unknown') + '</div>';
+        h += '<div style="color:#5a6a8a;font-size:0.8em">' + esc(c.lastCompany || 'Unknown company') + '</div>';
+        if (hasChanges) {
+          const lastChange = c.changeHistory[c.changeHistory.length - 1];
+          h += '<div style="margin-top:8px;padding:8px;background:rgba(255,193,7,0.1);border-radius:4px;font-size:0.8em">';
+          h += '🔔 <strong>Changed:</strong> ';
+          lastChange.changes.forEach(ch => {
+            h += ch.type + ': ' + esc(ch.from) + ' → ' + esc(ch.to) + ' ';
+          });
+          h += '</div>';
+        }
+        h += '<div class="colleague-meta" style="margin-top:8px">';
+        if (c.linkedin) h += '<a href="' + esc(c.linkedin) + '" target="_blank" style="color:#4ecdc4;font-size:0.8em">LinkedIn →</a>';
+        if (c.lastChecked) h += '<span style="font-size:0.75em">Checked: ' + new Date(c.lastChecked).toLocaleDateString() + '</span>';
+        h += '</div>';
+        h += '<button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="removeFromWatchlist(\\''+c.id+'\\')">Remove</button>';
+        h += '</div>';
+      });
+      h += '</div>';
+      h += '<p style="text-align:center;color:#5a6a8a;margin-top:15px;font-size:0.85em">' + data.total + ' contacts tracked' + (data.lastChecked ? ' • Last checked: ' + new Date(data.lastChecked).toLocaleString() : '') + '</p>';
+      list.innerHTML = h;
+    }
+    
+    async function addToWatchlist() {
+      const contact = {
+        firstName: document.getElementById('w-firstName').value.trim(),
+        lastName: document.getElementById('w-lastName').value.trim(),
+        company: document.getElementById('w-company').value.trim(),
+        title: document.getElementById('w-title').value.trim(),
+        linkedin: document.getElementById('w-linkedin').value.trim(),
+      };
+      
+      if (!contact.firstName || !contact.lastName) {
+        showError('w-error', 'First and last name required');
+        return;
+      }
+      
+      try {
+        const resp = await fetch('/api/watchlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(contact)
+        });
+        const data = await resp.json();
+        
+        if (data.success) {
+          document.getElementById('w-firstName').value = '';
+          document.getElementById('w-lastName').value = '';
+          document.getElementById('w-company').value = '';
+          document.getElementById('w-title').value = '';
+          document.getElementById('w-linkedin').value = '';
+          loadWatchlist();
+        } else {
+          showError('w-error', data.error || 'Failed to add');
+        }
+      } catch (e) { showError('w-error', e.message); }
+    }
+    
+    async function removeFromWatchlist(id) {
+      if (!confirm('Remove this contact from watchlist?')) return;
+      try {
+        await fetch('/api/watchlist?id=' + id, { method: 'DELETE' });
+        loadWatchlist();
+      } catch (e) { showError('w-error', e.message); }
+    }
+    
+    async function checkWatchlist() {
+      showLoading('w-loading', true);
+      hideError('w-error');
+      document.getElementById('w-changes').innerHTML = '';
+      
+      try {
+        const resp = await fetch('/api/watchlist/check', { method: 'POST' });
+        const data = await resp.json();
+        
+        if (data.changes?.length > 0) {
+          let h = '<div class="warning" style="display:block"><strong>🔔 ' + data.changes.length + ' job changes detected!</strong><ul style="margin:10px 0 0 20px">';
+          data.changes.forEach(c => {
+            c.changes.forEach(ch => {
+              h += '<li><strong>' + esc(c.contact.name) + '</strong>: ' + ch.type + ' changed from "' + esc(ch.from) + '" to "' + esc(ch.to) + '"</li>';
+            });
+          });
+          h += '</ul></div>';
+          document.getElementById('w-changes').innerHTML = h;
+        } else {
+          document.getElementById('w-changes').innerHTML = '<div class="success show">✅ No changes detected. All ' + data.checked + ' contacts checked.</div>';
+        }
+        
+        loadWatchlist();
+      } catch (e) { showError('w-error', e.message); }
+      finally { showLoading('w-loading', false); }
+    }
+    
+    // Load watchlist on tab switch
+    document.querySelector('[data-tab="watchlist"]')?.addEventListener('click', loadWatchlist);
   </script>
 </body>
 </html>`;
@@ -1210,6 +1362,109 @@ const server = http.createServer((req, res) => {
           curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
         }
       });
+    });
+    return;
+  }
+
+
+  // ============ WATCHLIST API ============
+  
+  // Get watchlist
+  if (parsed.pathname === '/api/watchlist' && req.method === 'GET') {
+    const data = watchlist.getWatchlist();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+    return;
+  }
+  
+  // Add to watchlist
+  if (parsed.pathname === '/api/watchlist' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const contact = JSON.parse(body);
+      console.log(`\x1b[36m👁️ Watchlist add: ${contact.firstName} ${contact.lastName}\x1b[0m`);
+      const result = watchlist.addToWatchlist(contact);
+      res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    });
+    return;
+  }
+  
+  // Remove from watchlist
+  if (parsed.pathname === '/api/watchlist' && req.method === 'DELETE') {
+    const { id } = parsed.query;
+    console.log(`\x1b[36m👁️ Watchlist remove: ${id}\x1b[0m`);
+    const result = watchlist.removeFromWatchlist(id);
+    res.writeHead(result.success ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+    return;
+  }
+  
+  // Check watchlist for changes
+  if (parsed.pathname === '/api/watchlist/check' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', async () => {
+      console.log(`\x1b[36m👁️ Checking watchlist for changes...\x1b[0m`);
+      const wl = watchlist.getWatchlist();
+      const results = { checked: 0, changes: [], errors: [] };
+      
+      for (const contact of wl.contacts) {
+        try {
+          // Enrich to get current data
+          let currentData = {};
+          
+          if (contact.linkedin) {
+            const lushaData = curlGet(
+              `https://api.lusha.com/v2/person?linkedinUrl=${encodeURIComponent(contact.linkedin)}&revealEmails=false&revealPhones=false`,
+              { 'api_key': config.lusha.apiKey }
+            );
+            const d = lushaData.data || lushaData.contact?.data;
+            if (d) {
+              currentData.title = d.currentJobTitle;
+              currentData.company = d.company?.name;
+            }
+          }
+          
+          if (!currentData.title) {
+            const apolloData = curlPost(
+              'https://api.apollo.io/v1/people/match',
+              { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
+              { first_name: contact.firstName, last_name: contact.lastName, linkedin_url: contact.linkedin }
+            );
+            if (apolloData.person) {
+              currentData.title = apolloData.person.title;
+              currentData.company = apolloData.person.organization?.name;
+            }
+          }
+          
+          const changes = watchlist.checkForChanges(contact, currentData);
+          
+          if (changes.length > 0) {
+            results.changes.push({
+              contact: { id: contact.id, name: `${contact.firstName} ${contact.lastName}`, linkedin: contact.linkedin },
+              changes: changes,
+            });
+            watchlist.updateContact(contact.id, currentData, changes);
+          } else {
+            watchlist.updateContact(contact.id, currentData, []);
+          }
+          
+          results.checked++;
+          
+          // Rate limiting
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          results.errors.push({ contact: contact.firstName + ' ' + contact.lastName, error: e.message });
+        }
+      }
+      
+      watchlist.markChecked();
+      console.log(`\x1b[32m✅ Checked ${results.checked} contacts, ${results.changes.length} changes found\x1b[0m`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(results));
     });
     return;
   }
