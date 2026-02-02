@@ -716,6 +716,173 @@ function searchByTech(techName, location, limit = 10) {
   return results;
 }
 
+
+// ============================================================================
+// LOOKALIKE COMPANIES - Find similar companies
+// ============================================================================
+
+function findLookalikes(seedCompany, filters = {}) {
+  const start = Date.now();
+  const { limit = 10, location, minEmployees, maxEmployees } = filters;
+  
+  const results = {
+    seed: null,
+    lookalikes: [],
+    criteria: {},
+    duration: 0,
+  };
+  
+  // Normalize domain
+  let domain = seedCompany.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  if (!domain.includes('.')) {
+    domain = seedCompany.toLowerCase().replace(/[^a-z0-9]/g, '') + '.com';
+  }
+  
+  // Get seed company details
+  try {
+    const seedData = curlGet(
+      `https://api.apollo.io/v1/organizations/enrich?domain=${encodeURIComponent(domain)}`,
+      { 'x-api-key': config.apollo.apiKey }
+    );
+    
+    if (seedData.organization) {
+      const org = seedData.organization;
+      results.seed = {
+        name: org.name,
+        domain: org.primary_domain,
+        industry: org.industry,
+        industryTagId: org.industry_tag_id,
+        employees: org.estimated_num_employees,
+        founded: org.founded_year,
+        keywords: org.keywords?.slice(0, 5),
+      };
+      
+      // Build search criteria based on seed
+      results.criteria = {
+        industry: org.industry,
+        employeeRange: getEmployeeRange(org.estimated_num_employees),
+      };
+    }
+  } catch (e) {
+    results.error = 'Could not find seed company: ' + e.message;
+    results.duration = Date.now() - start;
+    return results;
+  }
+  
+  if (!results.seed) {
+    results.error = 'Seed company not found';
+    results.duration = Date.now() - start;
+    return results;
+  }
+  
+  // Search for similar companies
+  try {
+    const params = new URLSearchParams();
+    
+    // Industry filter
+    if (results.seed.industryTagId) {
+      params.append('organization_industry_tag_ids[]', results.seed.industryTagId);
+    }
+    
+    // Employee range filter
+    const empRange = minEmployees && maxEmployees 
+      ? `${minEmployees},${maxEmployees}`
+      : results.criteria.employeeRange;
+    if (empRange) {
+      params.append('organization_num_employees_ranges[]', empRange);
+    }
+    
+    // Location filter
+    if (location) {
+      params.append('organization_locations[]', location);
+    }
+    
+    // Get C-suite to ensure we get real companies
+    params.append('person_seniorities[]', 'c_suite');
+    params.append('per_page', '25');
+    
+    const searchData = curlPost(
+      `https://api.apollo.io/api/v1/mixed_people/api_search?${params}`,
+      { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
+      {}
+    );
+    
+    if (searchData.people?.length) {
+      const seen = new Set();
+      seen.add(results.seed.domain); // Exclude seed company
+      
+      searchData.people.forEach(p => {
+        if (p.organization && !seen.has(p.organization.primary_domain)) {
+          seen.add(p.organization.primary_domain);
+          
+          if (results.lookalikes.length < limit) {
+            results.lookalikes.push({
+              name: p.organization.name,
+              domain: p.organization.primary_domain,
+              employees: p.organization.estimated_num_employees,
+              industry: p.organization.industry,
+              linkedin: p.organization.linkedin_url,
+              founded: p.organization.founded_year,
+              // Similarity score (simple version)
+              similarity: calculateSimilarity(results.seed, p.organization),
+            });
+          }
+        }
+      });
+      
+      // Sort by similarity
+      results.lookalikes.sort((a, b) => b.similarity - a.similarity);
+    }
+  } catch (e) {
+    results.error = 'Search failed: ' + e.message;
+  }
+  
+  results.duration = Date.now() - start;
+  return results;
+}
+
+function getEmployeeRange(count) {
+  if (!count) return null;
+  if (count < 50) return '1,50';
+  if (count < 200) return '51,200';
+  if (count < 500) return '201,500';
+  if (count < 1000) return '501,1000';
+  if (count < 5000) return '1001,5000';
+  if (count < 10000) return '5001,10000';
+  return '10001,1000000';
+}
+
+function calculateSimilarity(seed, company) {
+  let score = 0;
+  
+  // Industry match (40 points)
+  if (seed.industry && company.industry && 
+      seed.industry.toLowerCase() === company.industry?.toLowerCase()) {
+    score += 40;
+  }
+  
+  // Employee size similarity (30 points)
+  if (seed.employees && company.estimated_num_employees) {
+    const ratio = Math.min(seed.employees, company.estimated_num_employees) / 
+                  Math.max(seed.employees, company.estimated_num_employees);
+    score += Math.round(ratio * 30);
+  }
+  
+  // Founded year similarity (20 points)
+  if (seed.founded && company.founded_year) {
+    const yearDiff = Math.abs(seed.founded - company.founded_year);
+    if (yearDiff <= 2) score += 20;
+    else if (yearDiff <= 5) score += 15;
+    else if (yearDiff <= 10) score += 10;
+    else if (yearDiff <= 20) score += 5;
+  }
+  
+  // Base score for being in results (10 points)
+  score += 10;
+  
+  return score;
+}
+
 function enrichLinkedIn(linkedinUrl) {
   const start = Date.now();
   const results = { person: null, emails: [], phones: [], sources: {} };
@@ -958,6 +1125,7 @@ const HTML = `<!DOCTYPE html>
       <div class="tab" data-tab="abn">🔢 ABN</div>
       <div class="tab" data-tab="hiring">💼 Hiring</div>
       <div class="tab" data-tab="tech">🔧 Tech Stack</div>
+      <div class="tab" data-tab="lookalike">🔄 Lookalikes</div>
       <div class="tab" data-tab="linkedin">🔗 LinkedIn</div>
       <div class="tab" data-tab="bulk">📋 Bulk</div>
       <div class="tab new" data-tab="watchlist">👁️ Watchlist</div>
@@ -1153,6 +1321,48 @@ const HTML = `<!DOCTYPE html>
       <div class="loading" id="tech-loading"><div class="spinner"></div>Loading tech data...</div>
       <div class="error" id="tech-error"></div>
       <div class="results" id="tech-results"></div>
+    </div>
+    
+    
+    <!-- Lookalike Panel -->
+    <div class="panel" id="panel-lookalike">
+      <div class="instructions">
+        <h4>🔄 Find Lookalike Companies</h4>
+        <p>Enter a company you like, and we'll find similar companies based on industry, size, and other characteristics.</p>
+      </div>
+      
+      <div class="form-row">
+        <div class="form-group" style="flex:2">
+          <label>Seed Company *</label>
+          <input type="text" id="look-seed" placeholder="atlassian.com or Atlassian">
+        </div>
+        <div class="form-group">
+          <label>Location (optional)</label>
+          <input type="text" id="look-location" placeholder="Sydney, Australia">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Min Employees</label>
+          <input type="number" id="look-min-emp" placeholder="100">
+        </div>
+        <div class="form-group">
+          <label>Max Employees</label>
+          <input type="number" id="look-max-emp" placeholder="5000">
+        </div>
+        <div class="form-group">
+          <label>Results</label>
+          <input type="number" id="look-limit" value="10" min="1" max="25">
+        </div>
+        <div class="form-group" style="flex:0">
+          <label>&nbsp;</label>
+          <button class="btn" onclick="findLookalikes()">🔄 Find Similar</button>
+        </div>
+      </div>
+      
+      <div class="loading" id="look-loading"><div class="spinner"></div>Finding similar companies...</div>
+      <div class="error" id="look-error"></div>
+      <div class="results" id="look-results"></div>
     </div>
     
     <div class="panel" id="panel-linkedin">
@@ -1756,6 +1966,89 @@ const HTML = `<!DOCTYPE html>
     document.getElementById('tech-company')?.addEventListener('keypress', e => { if (e.key === 'Enter') getTechStack(); });
     document.getElementById('tech-name')?.addEventListener('keypress', e => { if (e.key === 'Enter') searchByTech(); });
 
+
+    // ============ LOOKALIKE COMPANIES ============
+    async function findLookalikes() {
+      const seed = document.getElementById('look-seed').value.trim();
+      if (!seed) { showError('look-error', 'Enter a seed company'); return; }
+      
+      const location = document.getElementById('look-location').value.trim();
+      const minEmp = document.getElementById('look-min-emp').value;
+      const maxEmp = document.getElementById('look-max-emp').value;
+      const limit = document.getElementById('look-limit').value || 10;
+      
+      showLoading('look-loading', true);
+      hideError('look-error');
+      document.getElementById('look-results').innerHTML = '';
+      
+      try {
+        let url = '/api/lookalike?company=' + encodeURIComponent(seed) + '&limit=' + limit;
+        if (location) url += '&location=' + encodeURIComponent(location);
+        if (minEmp) url += '&minEmployees=' + minEmp;
+        if (maxEmp) url += '&maxEmployees=' + maxEmp;
+        
+        const resp = await fetch(url);
+        const data = await resp.json();
+        
+        if (data.error) throw new Error(data.error);
+        
+        let h = '<div class="result-card">';
+        
+        // Seed company info
+        if (data.seed) {
+          h += '<div style="background:rgba(78,205,196,0.1);padding:15px;border-radius:8px;margin-bottom:20px">';
+          h += '<h4 style="color:#4ecdc4;margin-bottom:10px">📌 Seed Company</h4>';
+          h += '<div class="colleague-name">' + esc(data.seed.name) + '</div>';
+          h += '<div class="colleague-meta" style="margin-top:8px">';
+          if (data.seed.industry) h += '<span>🏷️ ' + esc(data.seed.industry) + '</span>';
+          if (data.seed.employees) h += '<span>👥 ' + data.seed.employees.toLocaleString() + '</span>';
+          if (data.seed.founded) h += '<span>📅 ' + data.seed.founded + '</span>';
+          h += '</div></div>';
+        }
+        
+        h += '<h3>🔄 ' + data.lookalikes.length + ' Similar Companies</h3>';
+        
+        if (data.criteria) {
+          h += '<p style="color:#8892b0;margin:10px 0">Matching: ' + esc(data.criteria.industry || 'any industry');
+          if (data.criteria.employeeRange) h += ' • ' + data.criteria.employeeRange.replace(',', '-') + ' employees';
+          h += '</p>';
+        }
+        
+        if (data.lookalikes.length) {
+          h += '<div class="result-grid">';
+          data.lookalikes.forEach(c => {
+            h += '<div class="colleague-card">';
+            h += '<div style="display:flex;justify-content:space-between;align-items:start">';
+            h += '<div class="colleague-name">' + esc(c.name) + '</div>';
+            h += '<span class="badge badge-source">' + c.similarity + '% match</span>';
+            h += '</div>';
+            if (c.industry) h += '<div class="colleague-title">' + esc(c.industry) + '</div>';
+            h += '<div class="colleague-meta" style="margin-top:8px">';
+            if (c.employees) h += '<span>👥 ' + c.employees.toLocaleString() + '</span>';
+            if (c.domain) h += '<span>🌐 ' + esc(c.domain) + '</span>';
+            if (c.founded) h += '<span>📅 ' + c.founded + '</span>';
+            h += '</div>';
+            h += '<div style="margin-top:10px;display:flex;gap:8px">';
+            if (c.linkedin) h += '<a href="' + esc(c.linkedin) + '" target="_blank" class="btn btn-sm btn-secondary">LinkedIn</a>';
+            h += '<button class="btn btn-sm" onclick="document.getElementById(\\'col-domain\\').value=\\'' + esc(c.domain) + '\\';document.querySelector(\\'[data-tab=colleagues]\\').click();">Find People</button>';
+            h += '</div>';
+            h += '</div>';
+          });
+          h += '</div>';
+        } else {
+          h += '<p style="color:#5a6a8a">No similar companies found. Try adjusting filters.</p>';
+        }
+        
+        h += '<div class="duration">' + data.duration + 'ms</div>';
+        h += '</div>';
+        
+        document.getElementById('look-results').innerHTML = h;
+      } catch (e) { showError('look-error', e.message); }
+      finally { showLoading('look-loading', false); }
+    }
+    
+    document.getElementById('look-seed')?.addEventListener('keypress', e => { if (e.key === 'Enter') findLookalikes(); });
+
     // ============ WATCHLIST ============
     async function loadWatchlist() {
       try {
@@ -2013,6 +2306,24 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // API: Lookalike Companies
+  if (parsed.pathname === '/api/lookalike') {
+    const { company, location, limit, minEmployees, maxEmployees } = parsed.query;
+    if (!company) { res.writeHead(400); res.end(JSON.stringify({ error: 'Seed company required' })); return; }
+    console.log(`\x1b[36m🔄 Lookalike: ${company}\x1b[0m`);
+    const results = findLookalikes(company, { 
+      location, 
+      limit: parseInt(limit) || 10,
+      minEmployees: minEmployees ? parseInt(minEmployees) : null,
+      maxEmployees: maxEmployees ? parseInt(maxEmployees) : null,
+    });
+    console.log(`\x1b[32m✅ Found ${results.lookalikes.length} similar companies (${results.duration}ms)\x1b[0m`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(results));
+    return;
+  }
+
+
 
 
   // API: LinkedIn
@@ -2233,6 +2544,54 @@ const server = http.createServer((req, res) => {
             msg += `\n*${cat}* (${techs.length})\n`;
             msg += `${techs.slice(0, 5).join(', ')}${techs.length > 5 ? '...' : ''}\n`;
           });
+        }
+        
+        msg += `\n_${results.duration}ms_`;
+        
+        if (response_url) {
+          curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+        }
+      });
+    });
+    return;
+  }
+
+
+  // Slack: /lookalike command
+  if (parsed.pathname === '/slack/lookalike' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const params = querystring.parse(body);
+      const { text, response_url } = params;
+      console.log(`\x1b[35m📱 Slack /lookalike: ${text}\x1b[0m`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ response_type: 'in_channel', text: `🔄 Finding companies similar to ${text}...` }));
+      
+      setImmediate(() => {
+        const results = findLookalikes(text.trim(), { limit: 10 });
+        
+        let msg = '';
+        
+        if (results.seed) {
+          msg += `📌 *Seed: ${results.seed.name}*\n`;
+          msg += `${results.seed.industry || ''} • ${results.seed.employees?.toLocaleString() || '?'} employees\n`;
+          msg += `━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        }
+        
+        msg += `\n🔄 *${results.lookalikes.length} Similar Companies*\n`;
+        
+        if (results.lookalikes.length) {
+          results.lookalikes.slice(0, 8).forEach(c => {
+            msg += `\n• *${c.name}* (${c.similarity}% match)\n`;
+            msg += `  ${c.industry || ''} • ${c.employees?.toLocaleString() || '?'} emp`;
+            if (c.linkedin) msg += ` • <${c.linkedin}|LinkedIn>`;
+            msg += '\n';
+          });
+          if (results.lookalikes.length > 8) msg += `\n_...and ${results.lookalikes.length - 8} more_\n`;
+        } else {
+          msg += '_No similar companies found_\n';
         }
         
         msg += `\n_${results.duration}ms_`;
