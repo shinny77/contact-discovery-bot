@@ -261,8 +261,7 @@ function enrichColleague(colleague) {
         first_name: colleague.firstName, 
         last_name: colleague.lastName,
         linkedin_url: colleague.linkedin,
-        reveal_personal_emails: true,
-        reveal_phone_number: true
+        reveal_personal_emails: true
       }
     );
     
