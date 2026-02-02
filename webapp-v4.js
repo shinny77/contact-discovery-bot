@@ -332,20 +332,33 @@ function discoverPerson(firstName, lastName, company, domain, linkedinUrl) {
 function prospectPeople(filters) {
   const start = Date.now();
   const { titles, locations, seniorities, limit = 10 } = filters;
-  const params = new URLSearchParams();
-  if (titles?.length) titles.forEach(t => params.append('person_titles[]', t));
-  if (locations?.length) locations.forEach(l => params.append('person_locations[]', l));
-  if (seniorities?.length) seniorities.forEach(s => params.append('person_seniorities[]', s));
-  params.append('per_page', Math.min(limit, 25).toString());
+  
+  // Build request body for new api_search endpoint
+  const requestBody = {
+    per_page: Math.min(limit, 25)
+  };
+  
+  if (titles?.length) requestBody.person_titles = titles;
+  if (locations?.length) requestBody.person_locations = locations;
+  if (seniorities?.length) requestBody.person_seniorities = seniorities;
 
   const results = { prospects: [], total: 0, duration: 0 };
   try {
-    const apolloData = curlPost(`https://api.apollo.io/api/v1/mixed_people/api_search?${params}`, { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey }, {});
+    const apolloData = curlPost(
+      'https://api.apollo.io/api/v1/mixed_people/api_search', 
+      { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey }, 
+      requestBody
+    );
     if (apolloData.people?.length) {
-      results.total = apolloData.pagination?.total_entries || apolloData.people.length;
+      results.total = apolloData.total_entries || apolloData.people.length;
       results.prospects = apolloData.people.slice(0, limit).map(p => ({
-        name: `${p.first_name || ''} ${p.last_name || ''}`.trim(), firstName: p.first_name, lastName: p.last_name,
-        title: p.title, company: p.organization?.name, companyDomain: p.organization?.primary_domain, linkedin: p.linkedin_url,
+        name: `${p.first_name || ''} ${p.last_name || ''}`.trim(), 
+        firstName: p.first_name, 
+        lastName: p.last_name,
+        title: p.title, 
+        company: p.organization?.name, 
+        companyDomain: p.organization?.primary_domain, 
+        linkedin: p.linkedin_url,
         location: p.city ? `${p.city}, ${p.state || p.country}` : p.country,
       }));
     }
