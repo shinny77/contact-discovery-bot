@@ -1795,6 +1795,226 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Slack: /abn command
+  if (parsed.pathname === '/slack/abn' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const params = querystring.parse(body);
+      const { text, response_url } = params;
+      console.log(`\x1b[35m📱 Slack /abn: ${text}\x1b[0m`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ response_type: 'in_channel', text: `🔢 Looking up ABN: ${text}...` }));
+      
+      setImmediate(() => {
+        const results = lookupABN(text.trim());
+        
+        let msg = `🔢 *ABN Search: ${text}*\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        
+        if (results.matches?.length) {
+          results.matches.slice(0, 5).forEach(m => {
+            msg += `\n*${m.abn}*\n`;
+            msg += `${m.entityName || 'Unknown'}\n`;
+            msg += `Status: ${m.status}${m.statusDate ? ' (since ' + m.statusDate + ')' : ''}\n`;
+            if (m.entityType) msg += `Type: ${m.entityType}\n`;
+            msg += `<${m.url}|View on ABR>\n`;
+          });
+        } else {
+          msg += `_No ABN records found_\n`;
+        }
+        
+        msg += `\n_${results.duration}ms_`;
+        
+        if (response_url) {
+          curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+        }
+      });
+    });
+    return;
+  }
+
+  // Slack: /hiring command
+  if (parsed.pathname === '/slack/hiring' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const params = querystring.parse(body);
+      const { text, response_url } = params;
+      console.log(`\x1b[35m📱 Slack /hiring: ${text}\x1b[0m`);
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ response_type: 'in_channel', text: `💼 Checking hiring at ${text}...` }));
+      
+      setImmediate(() => {
+        const results = getHiringSignals(text.trim());
+        
+        let msg = `💼 *${results.company?.name || text}*\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        
+        if (results.company) {
+          if (results.company.employees) msg += `👥 ${results.company.employees.toLocaleString()} employees\n`;
+          if (results.company.industry) msg += `🏷️ ${results.company.industry}\n`;
+        }
+        
+        if (results.jobCount) {
+          msg += `\n📊 *${results.jobCount} open positions*\n`;
+        }
+        
+        if (results.growthIndicators?.length) {
+          results.growthIndicators.forEach(g => {
+            const emoji = g.type === 'hot' ? '🔥' : g.type === 'active' ? '📈' : '✅';
+            msg += `${emoji} ${g.label}\n`;
+          });
+        }
+        
+        if (results.careerPages?.length) {
+          msg += `\n📍 *Job Sources:*\n`;
+          results.careerPages.slice(0, 4).forEach(p => {
+            msg += `• <${p.url}|${p.source}>${p.jobCount ? ' (' + p.jobCount + ' jobs)' : ''}\n`;
+          });
+        }
+        
+        msg += `\n_${results.duration}ms_`;
+        
+        if (response_url) {
+          curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+        }
+      });
+    });
+    return;
+  }
+
+  // Slack: /watchlist command
+  if (parsed.pathname === '/slack/watchlist' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      const params = querystring.parse(body);
+      const { text, response_url } = params;
+      console.log(`\x1b[35m📱 Slack /watchlist: ${text}\x1b[0m`);
+      
+      const parts = text.trim().split(/\s+/);
+      const cmd = parts[0]?.toLowerCase() || 'list';
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      
+      let msg = '';
+      
+      if (cmd === 'add' && parts.length >= 3) {
+        // /watchlist add FirstName LastName [Company]
+        const firstName = parts[1];
+        const lastName = parts[2];
+        const company = parts.slice(3).join(' ');
+        
+        const result = watchlist.addToWatchlist({ firstName, lastName, company });
+        
+        if (result.success) {
+          msg = `✅ Added *${firstName} ${lastName}*${company ? ' @ ' + company : ''} to watchlist\n_${result.total} contacts tracked_`;
+        } else {
+          msg = `❌ ${result.error}`;
+        }
+        res.end(JSON.stringify({ response_type: 'ephemeral', text: msg }));
+        
+      } else if (cmd === 'check') {
+        res.end(JSON.stringify({ response_type: 'in_channel', text: '👁️ Checking watchlist for job changes...' }));
+        
+        setImmediate(async () => {
+          const wl = watchlist.getWatchlist();
+          const results = { checked: 0, changes: [] };
+          
+          for (const contact of wl.contacts.slice(0, 20)) {
+            try {
+              let currentData = {};
+              
+              if (contact.linkedin) {
+                const lushaData = curlGet(
+                  `https://api.lusha.com/v2/person?linkedinUrl=${encodeURIComponent(contact.linkedin)}&revealEmails=false&revealPhones=false`,
+                  { 'api_key': config.lusha.apiKey }
+                );
+                const d = lushaData.data || lushaData.contact?.data;
+                if (d) {
+                  currentData.title = d.currentJobTitle;
+                  currentData.company = d.company?.name;
+                }
+              }
+              
+              if (!currentData.title) {
+                const apolloData = curlPost(
+                  'https://api.apollo.io/v1/people/match',
+                  { 'Content-Type': 'application/json', 'x-api-key': config.apollo.apiKey },
+                  { first_name: contact.firstName, last_name: contact.lastName, linkedin_url: contact.linkedin }
+                );
+                if (apolloData.person) {
+                  currentData.title = apolloData.person.title;
+                  currentData.company = apolloData.person.organization?.name;
+                }
+              }
+              
+              const changes = watchlist.checkForChanges(contact, currentData);
+              if (changes.length > 0) {
+                results.changes.push({ contact, changes });
+                watchlist.updateContact(contact.id, currentData, changes);
+              } else {
+                watchlist.updateContact(contact.id, currentData, []);
+              }
+              results.checked++;
+            } catch (e) { /* continue */ }
+          }
+          
+          watchlist.markChecked();
+          
+          if (results.changes.length > 0) {
+            msg = `🔔 *${results.changes.length} job changes detected!*\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            results.changes.forEach(c => {
+              msg += `\n*${c.contact.firstName} ${c.contact.lastName}*\n`;
+              c.changes.forEach(ch => {
+                msg += `• ${ch.type}: ${ch.from} → ${ch.to}\n`;
+              });
+            });
+          } else {
+            msg = `✅ No changes detected. Checked ${results.checked} contacts.`;
+          }
+          
+          if (response_url) {
+            curlPost(response_url, { 'Content-Type': 'application/json' }, { response_type: 'in_channel', text: msg });
+          }
+        });
+        return;
+        
+      } else if (cmd === 'remove' && parts[1]) {
+        const result = watchlist.removeFromWatchlist(parts[1]);
+        msg = result.success ? `✅ Removed from watchlist` : `❌ ${result.error}`;
+        res.end(JSON.stringify({ response_type: 'ephemeral', text: msg }));
+        
+      } else {
+        // Default: list
+        const wl = watchlist.getWatchlist();
+        msg = `👁️ *Watchlist* (${wl.total} contacts)\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+        
+        if (wl.contacts.length === 0) {
+          msg += `_Empty. Add contacts with:_\n\`/watchlist add FirstName LastName Company\``;
+        } else {
+          wl.contacts.slice(0, 15).forEach(c => {
+            const hasChanges = c.changeHistory?.length > 0;
+            msg += `${hasChanges ? '🔔' : '•'} *${c.firstName} ${c.lastName}*`;
+            if (c.lastCompany) msg += ` @ ${c.lastCompany}`;
+            if (c.lastTitle) msg += ` (${c.lastTitle})`;
+            msg += '\n';
+          });
+          if (wl.total > 15) msg += `_...and ${wl.total - 15} more_\n`;
+        }
+        
+        if (wl.lastChecked) {
+          msg += `\n_Last checked: ${new Date(wl.lastChecked).toLocaleString()}_`;
+        }
+        
+        res.end(JSON.stringify({ response_type: 'in_channel', text: msg }));
+      }
+    });
+    return;
+  }
+
+
 
   // ============ WATCHLIST API ============
   
