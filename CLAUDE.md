@@ -2,11 +2,22 @@
 
 ## Overview
 
-Multi-source contact discovery platform for AU/NZ business contacts (v6.8). Aggregates data from Apollo, Lusha, Firmable, and SerpAPI. Used for M&A deal origination and lead enrichment.
+Multi-source contact discovery platform for AU/NZ business contacts (v6.8). Aggregates Apollo, Lusha, Firmable, SerpAPI. Used for M&A deal origination and lead enrichment.
 
 ## Architecture
 
-Node.js application with multiple interfaces: web app (`webapp-v4.js`, primary), CLI (`cli.js`), and Slack bot (`slack-bot.js`). Plain Express server, no framework.
+Node.js + Express. Multiple interfaces: web app (primary), CLI, Slack bot.
+
+```
+webapp-v4.js (156KB, primary)    Web interface with search, discovery, company intel
+index.js (56KB)                  Core discovery logic and all API integrations
+cli.js                           Command-line interface
+slack-bot.js                     Slack integration
+watchlist.js                     Target company/contact monitoring
+stats.js                         Usage and credit tracking
+```
+
+Older webapp versions (v1-v3) retained but superseded by v4.
 
 ## Development Commands
 
@@ -14,35 +25,32 @@ Node.js application with multiple interfaces: web app (`webapp-v4.js`, primary),
 - CLI: `node cli.js`
 - Slack bot: `node slack-bot.js`
 - Test: `node test.js`
-- Stats: `node stats.js`
-- Watchlist: `node watchlist.js`
 - Docker: `docker compose up`
+- Full setup: see `SETUP.md`
 
 ## Key Files
 
-- `webapp-v4.js` - Primary web interface (156KB, latest version)
+- `webapp-v4.js` - Primary web interface (156KB, latest)
 - `index.js` - Core discovery logic and API integrations (56KB)
-- `cli.js` - Command-line interface
-- `slack-bot.js` - Slack integration
 - `watchlist.js` - Monitoring for target companies/contacts
 - `stats.js` - Usage and credit tracking
-- `SETUP.md` - Detailed setup and deployment instructions
+- `SETUP.md` - Full environment setup and API key configuration
 - `.env.example` - Required environment variables
-
-Older webapp versions (v1, v2, v3) are retained but superseded by v4.
 
 ## Modes
 
-1. **Discover** - Full contact lookup for a named person (all sources, costs credits)
-2. **Prospect** - Lead search by title/location (Apollo free tier, no credits)
-3. **Colleagues** - Find specific roles at a company (Firmable + Apollo)
-4. **Company** - Full company intelligence profile with ABN/ACN, employee count, tech stack (Firmable + Apollo)
+| Mode | Purpose | Cost |
+|------|---------|------|
+| Discover | Full contact lookup for a named person (all sources) | Credits |
+| Prospect | Lead search by title/location (Apollo free tier) | Free |
+| Colleagues | Find specific roles at a company (Firmable + Apollo) | Credits |
+| Company | Full company intel: ABN/ACN, employees, tech stack | Credits |
 
 ## Data Sources
 
 | Source | Capability | Cost |
 |--------|-----------|------|
-| Apollo.io | Candidate discovery, prospecting, free tier search | Credits per enrichment |
+| Apollo.io | Discovery, prospecting, free tier search | Credits per enrichment |
 | Lusha | Email, phone, personal contact details | Credits per lookup |
 | Firmable | Australian company data, ABN-linked profiles | Credits per lookup |
 | SerpAPI | LinkedIn profile validation, web search | Per-search pricing |
@@ -52,7 +60,6 @@ Older webapp versions (v1, v2, v3) are retained but superseded by v4.
 - Apollo rate limits: add 200ms delay between batch requests
 - Firmable returns ABN-linked data: useful for ASIC cross-referencing
 - Lusha is expensive: only call for final shortlisted contacts
-- PII handling: contact data must not be committed to the repo
-- Multiple webapp versions exist (v1-v4): always use `webapp-v4.js` (the `main` entry in package.json)
+- PII handling: contact data must never be committed to repo
+- Always use `webapp-v4.js` (the `main` entry in package.json), not older versions
 - Docker config exists for containerised deployment
-- See `SETUP.md` for full environment setup and API key configuration
