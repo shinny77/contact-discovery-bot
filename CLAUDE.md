@@ -52,8 +52,9 @@ Older webapp versions (v1-v3) retained but superseded by v4.
 |--------|-----------|------|
 | Apollo.io | Discovery, prospecting, free tier search | Credits per enrichment |
 | Lusha | Email, phone, personal contact details | Credits per lookup |
-| Firmable /company | Australian company data, ABN-linked profiles | Credits per lookup |
-| Firmable /people | Individual lookup via LinkedIn URL (best AU mobiles) | Credits per lookup |
+| Firmable /company | GET ?website= or ?ln_slug=. Bearer auth. AU company data, ABN-linked | Credits per lookup |
+| Firmable /people | GET ?work_email= (most reliable) or ?ln_slug= or ?id=. Bearer auth | Credits per lookup |
+| Firmable /people/search | POST JSON body. Numeric seniority (1-7) + dept (1-17) IDs. Requires companyId anchor | Credits per search |
 | SerpAPI | LinkedIn profile validation, web search | Per-search pricing |
 
 ## Enrichment Pipeline (v6.9)
@@ -68,10 +69,13 @@ discoverContact() flow:
   Phase 2: API enrichment (parallel)
     - Apollo: name/company match -> email, LinkedIn URL
     - Lusha: name/company match -> email, phone
-  Phase 3: Firmable (AU/NZ only, sequential)
-    - 3a: /company endpoint (domain-based) -> company info, matching emails
-    - 3b: /people?ln_url= endpoint (LinkedIn-based) -> direct email, AU mobile
-    - Key: /people endpoint requires LinkedIn URL but returns best AU data
+  Phase 3: Firmable (AU/NZ only, sequential, Bearer auth)
+    - 3a: GET /company?website= or ?ln_slug= -> company info, companyId
+    - 3b: GET /people?work_email= (most reliable) or ?ln_slug= -> direct email, AU mobile
+    - 3c: POST /people/search body: {companyId, seniority: "3", department: "14", size: "10"}
+         Seniority: 1=Board 2=Founder 3=C-Suite 4=VP/Director 5=Manager 6=Other
+         Department: 1=GenMgmt 2=Sales 5=Engineering 6=HR 14=Finance (numeric IDs only)
+    - Key: work_email is most reliable people lookup param; ln_slug coverage is patchy
   Phase 4: Consolidation
     - Deduplicate across sources, boost confidence for multi-source matches
     - Flag non-AU phone numbers (confidence reduced by 0.3)
@@ -89,8 +93,10 @@ Key insights from production testing:
 ## Critical Gotchas
 
 - Apollo rate limits: add 200ms delay between batch requests
-- Firmable /people requires ln_url param: without LinkedIn URL it cannot be queried
-- Firmable /company returns company-level data only (not individual contacts)
+- Firmable /people: work_email is most reliable param; ln_slug returns "not found" for many profiles
+- Firmable /company: GET ?website= or ?ln_slug= returns company-level data + companyId for people/search
+- Firmable /people/search: POST requires companyId anchor; seniority + dept cross-filter without companyId returns zero
+- Firmable auth: Authorization: Bearer fbl_xxx header (not x-api-key)
 - Lusha non-AU phones: +44/+1/+65 numbers flagged, confidence reduced
 - LinkedIn slug confidence: profiles rejected if name not found in URL slug
 - PII handling: contact data must never be committed to repo
