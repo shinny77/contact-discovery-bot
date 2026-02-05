@@ -592,13 +592,24 @@ const webSearch = {
         title: result.title,
         snippet: result.snippet,
         confidence: Math.min(score, 1.0),
+        nameInSlug: urlSlug.includes(person.firstName.toLowerCase()) || urlSlug.includes(person.lastName.toLowerCase()),
         fromKnowledgeGraph: result.fromKnowledgeGraph || false,
       });
     });
     
+    // Filter: require at least first or last name in the LinkedIn slug
+    // This prevents false positives (e.g. searching "Shane Hunter" matching "Shane Flaherty")
+    const nameFiltered = scored.filter(r => {
+      if (r.nameInSlug) return true;
+      // Allow knowledge graph results even without slug match (high trust)
+      if (r.fromKnowledgeGraph && r.confidence >= 0.8) return true;
+      console.log(`   ⚠ LinkedIn rejected (name not in slug): ${r.url}`);
+      return false;
+    });
+    
     // Sort by confidence and deduplicate
     const seen = new Set();
-    return scored
+    return nameFiltered
       .sort((a, b) => b.confidence - a.confidence)
       .filter(r => {
         // Normalize URL for deduplication
@@ -920,6 +931,88 @@ const apiServices = {
   },
 
   /**
+   * Firmable People API - LinkedIn-based individual lookup (v6.9)
+   * 
+   * Key learning: Firmable /people?ln_url= returns the best AU contact data
+   * (direct emails, mobile +61 numbers, seniority, department) but REQUIRES
+   * a LinkedIn URL. The /company endpoint only returns company-level data.
+   *
+   * This method should be called whenever a LinkedIn URL is available,
+   * either from web search discovery or from Apollo/other sources.
+   */
+  async firmablePersonLookup(linkedinUrl) {
+    const results = { emails: [], mobiles: [], raw: null, error: null, personInfo: null };
+    
+    if (!linkedinUrl || !config.apis.firmable.apiKey) return results;
+    
+    try {
+      const response = await axios.get(`${config.apis.firmable.baseUrl}/people`, {
+        params: { ln_url: linkedinUrl },
+        headers: { 'Authorization': `Bearer ${config.apis.firmable.apiKey}` },
+        timeout: 10000,
+      });
+      
+      const data = response.data;
+      if (!data || data.error || !data.name) {
+        results.error = data?.error || 'No person data returned';
+        return results;
+      }
+      
+      results.raw = data;
+      results.personInfo = {
+        name: data.name,
+        headline: data.headline || data.position || '',
+        seniority: data.seniority || '',
+        department: data.department || '',
+        location: Array.isArray(data.location) ? data.location.join(', ') : (data.location || ''),
+        company: data.current_company?.name || '',
+        linkedin: linkedinUrl,
+      };
+      
+      // Extract work emails
+      const workEmails = data.emails?.work || [];
+      workEmails.forEach(e => {
+        results.emails.push({
+          email: e.value || e,
+          type: 'work',
+          confidence: 0.95,
+          source: 'firmable-person',
+        });
+      });
+      
+      // Extract personal emails as fallback
+      const personalEmails = data.emails?.personal || [];
+      personalEmails.forEach(e => {
+        results.emails.push({
+          email: e.value || e,
+          type: 'personal',
+          confidence: 0.7,
+          source: 'firmable-person',
+        });
+      });
+      
+      // Extract phone numbers - prefer AU (+61) numbers
+      const phones = data.phones || [];
+      phones.forEach(p => {
+        const number = p.value || p;
+        const isAU = String(number).startsWith('+61') || String(number).startsWith('04');
+        results.mobiles.push({
+          number: String(number),
+          type: isAU ? 'mobile-au' : 'mobile',
+          confidence: isAU ? 0.95 : 0.7,
+          source: 'firmable-person',
+          auVerified: isAU,
+        });
+      });
+      
+    } catch (error) {
+      results.error = error.response?.data?.error || error.response?.data?.message || error.message;
+    }
+    
+    return results;
+  },
+
+  /**
    * Lusha API (Enhanced with domain)
    */
   async lushaEnrich(person) {
@@ -1151,7 +1244,45 @@ async function discoverContact(input, options = {}) {
   const isAUNZ = person.location?.toLowerCase().match(/australia|au|new zealand|nz|sydney|melbourne|brisbane|perth|adelaide|auckland|wellington|hobart|canberra|gold coast|newcastle/i);
   if (isAUNZ || !person.location) {
     console.log('   📡 Firmable: AU/NZ contact detected');
+    
+    // 3a: Company-level lookup (domain-based, returns company info + matching emails)
     results.sources.firmable = await apiServices.firmableEnrich(person, results.linkedin);
+    
+    // 3b: Person-level lookup via LinkedIn URL (returns direct email + mobile)
+    // Key insight: Firmable /people?ln_url= is the best source for AU mobile numbers
+    // but requires a LinkedIn URL. Web search discovery or Apollo may have found one.
+    if (results.linkedin) {
+      console.log('   📡 Firmable Person: querying via LinkedIn URL');
+      const firmablePerson = await apiServices.firmablePersonLookup(results.linkedin);
+      
+      if (firmablePerson && !firmablePerson.error) {
+        // Merge person-level data into firmable results
+        if (!results.sources.firmable) results.sources.firmable = { emails: [], mobiles: [], raw: null, error: null };
+        
+        // Add person emails (higher quality than company-level matches)
+        firmablePerson.emails?.forEach(e => {
+          if (!results.sources.firmable.emails.some(existing => existing.email?.toLowerCase() === e.email?.toLowerCase())) {
+            results.sources.firmable.emails.push(e);
+          }
+        });
+        
+        // Add person mobiles (direct lines, not company switchboard)
+        firmablePerson.mobiles?.forEach(m => {
+          if (!results.sources.firmable.mobiles.some(existing => existing.number?.replace(/\D/g, '') === m.number?.replace(/\D/g, ''))) {
+            results.sources.firmable.mobiles.push(m);
+          }
+        });
+        
+        // Store person info for context
+        results.sources.firmable.personInfo = firmablePerson.personInfo;
+        
+        console.log(`   ✓ Firmable Person: ${firmablePerson.emails?.length || 0} emails, ${firmablePerson.mobiles?.length || 0} mobiles`);
+      } else {
+        console.log(`   ✗ Firmable Person: ${firmablePerson?.error || 'no match'}`);
+      }
+    } else {
+      console.log('   ⚠ Firmable Person: skipped (no LinkedIn URL available)');
+    }
   }
   
   // Step 4: Consolidate and deduplicate
@@ -1198,6 +1329,21 @@ async function discoverContact(input, options = {}) {
       mobileCounts[key].confidence = Math.min(mobileCounts[key].confidence + 0.1, 1.0);
     }
   });
+  
+  // Flag non-AU numbers when contact is expected to be Australian
+  // Lusha sometimes returns stale UK/US numbers for AU-based contacts
+  if (isAUNZ) {
+    Object.values(mobileCounts).forEach(m => {
+      const num = m.number || '';
+      const isAU = num.startsWith('+61') || num.startsWith('04') || num.startsWith('61');
+      const isNZ = num.startsWith('+64') || num.startsWith('64');
+      if (!isAU && !isNZ) {
+        m.confidence = Math.max(m.confidence - 0.3, 0.1);
+        m.nonAUFlag = true;
+        console.log(`   ⚠ Non-AU mobile flagged (confidence reduced): ${num}`);
+      }
+    });
+  }
   
   results.consolidated.mobiles = Object.values(mobileCounts)
     .sort((a, b) => b.confidence - a.confidence);
@@ -1779,7 +1925,7 @@ app.get('/api/cache/stats', async (req, res) => {
 app.listen(config.port, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════════╗
-║           CONTACT DISCOVERY BOT v2.0                             ║
+║           CONTACT DISCOVERY BOT v2.1                             ║
 ╠═══════════════════════════════════════════════════════════════════╣
 ║  🆕 ENHANCEMENTS:                                                ║
 ║    • Web search pre-enrichment                                   ║
