@@ -37,20 +37,20 @@ const config = {
   // Data Enrichment APIs
   apis: {
     firmable: {
-      apiKey: process.env.FIRMABLE_API_KEY || 'fbl_2GUDMcb9SDhv3FX5WM6dTV',
+      apiKey: process.env.FIRMABLE_API_KEY || process.env.FIRMABLE_API_KEY || '',
       baseUrl: 'https://api.firmable.com',
     },
     lusha: {
-      apiKey: process.env.LUSHA_API_KEY || '5522a219-a387-4df9-ab7c-19b92b3640f3',
+      apiKey: process.env.LUSHA_API_KEY || process.env.LUSHA_API_KEY || '',
       baseUrl: 'https://api.lusha.com',
     },
     apollo: {
-      apiKey: process.env.APOLLO_API_KEY || '9J2iMFgV58TQXeE9PpetLg',
+      apiKey: process.env.APOLLO_API_KEY || process.env.APOLLO_API_KEY || '',
       baseUrl: 'https://api.apollo.io',
     },
     // For web search - using SerpAPI
     serp: {
-      apiKey: process.env.SERP_API_KEY || '76d491d95fe5a98fd8a86f9a2a1d722c191fdc4aafb7047d32ef166ee887049b',
+      apiKey: process.env.SERP_API_KEY || process.env.SERPAPI_KEY || '',
       baseUrl: 'https://serpapi.com',
     },
     // Email validation

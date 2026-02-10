@@ -20,13 +20,13 @@ const PORT = process.env.PORT || 3000;
 
 const config = {
   serp: {
-    apiKey: process.env.SERP_API_KEY || '76d491d95fe5a98fd8a86f9a2a1d722c191fdc4aafb7047d32ef166ee887049b',
+    apiKey: process.env.SERP_API_KEY || process.env.SERPAPI_KEY || '',
   },
   apollo: {
-    apiKey: process.env.APOLLO_API_KEY || '9J2iMFgV58TQXeE9PpetLg',
+    apiKey: process.env.APOLLO_API_KEY || process.env.APOLLO_API_KEY || '',
   },
   firmable: {
-    apiKey: process.env.FIRMABLE_API_KEY || 'fbl_2GUDMcb9SDhv3FX5WM6dTV',
+    apiKey: process.env.FIRMABLE_API_KEY || process.env.FIRMABLE_API_KEY || '',
   },
 };
 
